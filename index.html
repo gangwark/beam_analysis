@@ -1,0 +1,3037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beam Studio · Design Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F3F5F2; --sheet:#FDFDFB; --card:#FFFFFF;
+    --ink:#16232D; --muted:#5C6B78; --line:#D7DFE6;
+    --grid:#E6EDF2; --grid-major:#CDD9E2;
+    --accent:#D9480F; --teal:#0B7285;
+    --ok:#2B8A3E; --warn:#C92A2A; --comp:#3B5BDB;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--paper);color:var(--ink);font-family:"Archivo",system-ui,sans-serif;font-size:14px;line-height:1.45}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 22px 0;border-bottom:1px solid var(--line);background:var(--card)}
+  header h1{font-weight:800;font-size:20px;letter-spacing:.4px;font-stretch:80%;text-transform:uppercase;padding-bottom:12px}
+  header h1 .lab{color:var(--accent)}
+  header .stage{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 10px;margin-bottom:12px}
+  .tabs{display:flex;gap:2px;margin-left:auto}
+  .tabs button{font-family:inherit;font-size:13px;font-weight:700;letter-spacing:.3px;border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;background:#EDF1EE;color:var(--muted);padding:9px 16px;cursor:pointer}
+  .tabs button.on{background:var(--paper);color:var(--ink);position:relative;top:1px}
+  .tabs button:focus-visible{outline:2px solid var(--teal)}
+
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;padding:16px 22px 28px;max-width:1280px;margin:0 auto}
+  @media (max-width:980px){ .wrap{grid-template-columns:1fr} }
+
+  .stagearea{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px}
+  .toolbar .sep{width:1px;align-self:stretch;background:var(--line);margin:0 2px}
+  button{font-family:inherit;font-size:12.5px;font-weight:600;color:var(--ink);background:#F1F4F1;border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{background:#E8EDE9}
+  button:focus-visible{outline:2px solid var(--teal);outline-offset:1px}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.mode.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.go:hover{background:#C23F0C}
+  button.ghost{background:transparent}
+  button.tiny{padding:2px 8px;font-size:12px;line-height:1.4}
+  label.chk{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);cursor:pointer}
+  input[type=checkbox]{accent-color:var(--teal)}
+  input.num,select.num{font-family:"IBM Plex Mono",monospace;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:5px 6px;background:var(--sheet);color:var(--ink)}
+  input.num{width:60px}
+  input.num.w44{width:48px}
+
+  .canvasCard{background:var(--sheet);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;position:relative}
+  canvas.big{display:block;width:100%;height:auto;touch-action:none}
+  canvas#stage{cursor:crosshair}
+  canvas#stage.editmode{cursor:default}
+  .statusbar{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--muted);padding:6px 12px;border-top:1px dashed var(--line);background:var(--card)}
+  .statusbar .flag{color:var(--warn);font-weight:600}
+  .statusbar .hint{margin-left:auto;color:#8896A2}
+
+  .presets{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px}
+  .presets h3{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .presets .row{display:flex;flex-wrap:wrap;gap:8px}
+
+  .panel{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+  .card h2{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);margin-bottom:10px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .card h2 .dot{width:8px;height:8px;border-radius:2px;background:var(--accent);display:inline-block}
+  .card h2 .dot.teal{background:var(--teal)}
+  .card h2 .dot.ink{background:var(--ink)}
+  .card h2 .dot.green{background:var(--ok)}
+
+  table.props{width:100%;border-collapse:collapse}
+  table.props td{padding:4px 0;font-size:12.5px;vertical-align:baseline}
+  table.props td.k{color:var(--muted)}
+  table.props td.v{text-align:right;font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:500;white-space:nowrap}
+  table.props tr.hr td{border-top:1px dashed var(--line);padding-top:8px}
+  .unit{color:#9AA6B0;font-size:11px;margin-left:3px}
+  sup{font-size:9px}
+  td.v.good{color:var(--ok);font-weight:600}
+  td.v.bad{color:var(--warn);font-weight:600}
+
+  .slicebox{display:flex;flex-direction:column;gap:8px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .slicevals{display:flex;gap:14px;flex-wrap:wrap;font-family:"IBM Plex Mono",monospace;font-size:12px}
+  .slicevals b{font-weight:600}
+  .note{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .warnnote{font-size:11.5px;color:var(--warn);line-height:1.5;margin-top:8px}
+
+  canvas#mohr,canvas#sstage{display:block;width:100%;height:auto;background:var(--sheet);border:1px solid var(--grid);border-radius:6px}
+
+  table.verify{width:100%;border-collapse:collapse;font-size:12px}
+  table.verify th{text-align:right;font-weight:600;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;padding:2px 0 6px}
+  table.verify th:first-child{text-align:left}
+  table.verify td{padding:3px 0;font-family:"IBM Plex Mono",monospace;text-align:right;white-space:nowrap}
+  table.verify td:first-child{font-family:"Archivo",sans-serif;text-align:left;color:var(--muted)}
+  td.ok{color:var(--ok);font-weight:600}
+  td.up{color:var(--ok);font-weight:600}
+  td.dn{color:var(--warn);font-weight:600}
+  .verify-msg{font-size:12px;color:var(--muted)}
+
+  .loadrow{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:12.5px;flex-wrap:wrap}
+  .loadrow .tag{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--accent);font-weight:600;width:22px}
+  .udlrow .tag{color:var(--teal)}
+  .cfg{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center}
+  .optrow{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:12.5px;flex-wrap:wrap}
+  .optrow .k{color:var(--muted);min-width:118px}
+  .sliderlabels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:-4px}
+  progress{width:100%;height:8px;accent-color:var(--teal)}
+
+  .badge{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:600;border-radius:4px;padding:1px 7px;white-space:nowrap}
+  .badge.pass{background:#E3F2E7;color:#2B8A3E}
+  .badge.marginal{background:#FFF1DB;color:#B25E09}
+  .badge.fail{background:#FBE4E4;color:#C92A2A}
+  .rubitem{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px dashed var(--grid);font-size:12px}
+  .rubitem:first-child{border-top:none}
+  .rubitem .why{color:var(--muted);font-size:11px;line-height:1.4;margin-top:2px}
+  .prow{display:grid;grid-template-columns:minmax(0,1fr) 58px 52px 52px;gap:6px;align-items:center;margin-bottom:8px;font-size:12px}
+  tr.win td{color:var(--accent);font-weight:700}
+  .prow input[type=range]{width:100%}
+  .prow input.num{width:100%}
+  .loglist{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);line-height:1.75;max-height:160px;overflow-y:auto}
+  .loglist b{color:var(--accent);font-weight:600}
+  .senrow{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;margin:3px 0;font-size:11px;font-family:"IBM Plex Mono",monospace}
+  .senbar{height:8px;background:var(--teal);border-radius:3px;min-width:2px}
+  .senwhy{font-size:11px;color:var(--muted);line-height:1.4;margin:2px 0 8px}
+  footer{max-width:1280px;margin:0 auto;padding:0 22px 26px;font-size:11.5px;color:#8896A2}
+  @media (prefers-reduced-motion:no-preference){
+    .card,.canvasCard,.toolbar,.presets{animation:rise .35s ease both}
+    @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Beam <span class="lab">Studio</span></h1>
+  <span class="stage">STAGE 1–5 / SECTION · BEAM · FREE-FORM · DESIGN STUDIO · PIPELINE</span>
+  <nav class="tabs">
+    <button id="tabSec" class="on">① Section Lab</button>
+    <button id="tabBeam">② Beam Lab</button>
+    <button id="tabOpt">③ Free-form</button>
+    <button id="tabDs">④ Design Studio</button>
+  </nav>
+</header>
+
+<!-- ============================ VIEW 1 · SECTION LAB ============================ -->
+<div class="wrap" id="viewSection">
+  <div class="stagearea">
+    <div class="toolbar" role="toolbar" aria-label="Drawing tools">
+      <button class="mode on" id="btnDraw" title="Click to place vertices of the outer boundary">✏ Draw shape</button>
+      <button class="mode" id="btnHole" title="Click to place vertices of a hole inside the shape">◎ Add hole</button>
+      <button class="mode" id="btnEdit" title="Drag vertices to reshape. Double-click a vertex to delete it.">✥ Edit</button>
+      <span class="sep"></span>
+      <button id="btnClose">Close shape</button>
+      <button id="btnUndo">Undo vertex</button>
+      <button id="btnClear" class="ghost">Clear all</button>
+      <span class="sep"></span>
+      <label class="chk"><input type="checkbox" id="chkSnap" checked> Snap to grid</label>
+      <label class="chk">Grid <input type="number" class="num w44" id="inGrid" value="10" min="1" max="100" step="1"> mm</label>
+      <span class="sep"></span>
+      <button id="btnZoomIn">＋</button>
+      <button id="btnZoomOut">－</button>
+      <button id="btnFit">Fit view</button>
+    </div>
+
+    <div class="canvasCard">
+      <canvas id="stage" class="big" width="820" height="560" aria-label="Cross-section drawing canvas"></canvas>
+      <div class="statusbar">
+        <span id="stCoord">x — , y — mm</span>
+        <span id="stCount"></span>
+        <span id="stWarn" class="flag"></span>
+        <span class="hint" id="stHint">Click to place vertices · Enter or “Close shape” to finish</span>
+      </div>
+    </div>
+
+    <div class="presets">
+      <h3>Preset sections — loaded with textbook formulas for verification</h3>
+      <div class="row">
+        <button data-preset="rect">Rectangle</button>
+        <button data-preset="ibeam">I-beam</button>
+        <button data-preset="tsec">T-section</button>
+        <button data-preset="box">Hollow box</button>
+        <button data-preset="channel">Channel</button>
+        <button data-preset="circle">Circle (60-gon)</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <h2><span class="dot"></span>Section properties</h2>
+      <table class="props">
+        <tr><td class="k">Area A</td><td class="v" id="pA">—</td></tr>
+        <tr><td class="k">Centroid x̄</td><td class="v" id="pCx">—</td></tr>
+        <tr><td class="k">Centroid ȳ</td><td class="v" id="pCy">—</td></tr>
+        <tr class="hr"><td class="k">I<sub>x</sub> (centroidal)</td><td class="v" id="pIx">—</td></tr>
+        <tr><td class="k">I<sub>y</sub> (centroidal)</td><td class="v" id="pIy">—</td></tr>
+        <tr><td class="k">I<sub>xy</sub> (centroidal)</td><td class="v" id="pIxy">—</td></tr>
+        <tr class="hr"><td class="k">c<sub>top</sub> / c<sub>bot</sub></td><td class="v" id="pC">—</td></tr>
+        <tr><td class="k">S<sub>top</sub> = I<sub>x</sub>/c<sub>top</sub></td><td class="v" id="pStop">—</td></tr>
+        <tr><td class="k">S<sub>bot</sub> = I<sub>x</sub>/c<sub>bot</sub></td><td class="v" id="pSbot">—</td></tr>
+        <tr class="hr"><td class="k">r<sub>x</sub> , r<sub>y</sub></td><td class="v" id="pR">—</td></tr>
+        <tr><td class="k">Efficiency S<sub>min</sub>/A</td><td class="v" id="pEff">—</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot teal"></span>Principal axes · Mohr’s circle of inertia</h2>
+      <table class="props">
+        <tr><td class="k">I₁ (major)</td><td class="v" id="pI1">—</td></tr>
+        <tr><td class="k">I₂ (minor)</td><td class="v" id="pI2">—</td></tr>
+        <tr><td class="k">θ<sub>p</sub> from x-axis</td><td class="v" id="pTh">—</td></tr>
+      </table>
+      <canvas id="mohr" width="640" height="330"></canvas>
+      <p class="note" style="margin-top:6px">Dashed teal axes on the sheet are the principal directions. Symmetric section ⇒ I<sub>xy</sub> = 0 and they align with x–y.</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot ink"></span>Slice inspector — Q(y) and t(y)</h2>
+      <div class="slicebox">
+        <input type="range" id="sliceY" min="0" max="100" step="0.5" value="50" aria-label="Slice height">
+        <div class="slicevals">
+          <span>y = <b id="sY">—</b> mm</span>
+          <span>Q = <b id="sQ">—</b></span>
+          <span>t = <b id="sT">—</b></span>
+        </div>
+        <p class="note">Q is the first moment of the area <em>above</em> the slice about the centroidal axis; t is the material width cut. These drive τ = VQ/(I·t) in the Beam Lab.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot green"></span>Verification vs. textbook</h2>
+      <div id="verifyBody"><p class="verify-msg">Load a preset to compare computed values against closed-form formulas.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ VIEW 2 · BEAM LAB ============================ -->
+<div class="wrap" id="viewBeam" style="display:none">
+  <div class="stagearea">
+    <div class="toolbar cfg" aria-label="Beam configuration">
+      <label class="chk">Span L <input type="number" class="num" id="bL" value="4" min="0.5" max="30" step="0.5"> m</label>
+      <span class="sep"></span>
+      <label class="chk">Material
+        <select class="num" id="bMat">
+          <option value="steel">Structural steel</option>
+          <option value="alu">Aluminum 6061-T6</option>
+          <option value="ti">Titanium Ti-6Al-4V</option>
+          <option value="wood">Douglas fir</option>
+        </select>
+      </label>
+      <span class="sep"></span>
+      <label class="chk"><input type="checkbox" id="bSelf"> Include self-weight <span class="mono" id="bSelfVal" style="font-size:11px;color:#8896A2"></span></label>
+    </div>
+
+    <div class="canvasCard">
+      <canvas id="bstage" class="big" width="820" height="660" aria-label="Beam diagrams"></canvas>
+      <div class="statusbar">
+        <span id="bCoord">x — m</span>
+        <span id="bWarnBar" class="flag"></span>
+        <span class="hint">Drag the red arrows to reposition point loads · hover for values</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <h2><span class="dot"></span>Loading</h2>
+      <div id="loadRows"></div>
+      <button class="tiny" id="bAddLoad" style="margin-top:2px">＋ Add point load</button>
+      <div class="loadrow udlrow" style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
+        <span class="tag">UDL</span>
+        <label class="chk"><input type="checkbox" id="uOn" checked></label>
+        w <input type="number" class="num w44" id="uW" value="5" step="0.5"> kN/m,
+        from <input type="number" class="num w44" id="uX1" value="0" step="0.25">
+        to <input type="number" class="num w44" id="uX2" value="4" step="0.25"> m
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot teal"></span>Results — driven by your drawn section</h2>
+      <table class="props">
+        <tr><td class="k">Reactions R₁ , R₂</td><td class="v" id="rR">—</td></tr>
+        <tr class="hr"><td class="k">|M|max @ x</td><td class="v" id="rM">—</td></tr>
+        <tr><td class="k">|V|max @ x</td><td class="v" id="rV">—</td></tr>
+        <tr><td class="k">δmax @ x</td><td class="v" id="rD">—</td></tr>
+        <tr><td class="k">Span / deflection</td><td class="v" id="rLd">—</td></tr>
+        <tr class="hr"><td class="k">σ top (bending)</td><td class="v" id="rSt">—</td></tr>
+        <tr><td class="k">σ bottom (bending)</td><td class="v" id="rSb">—</td></tr>
+        <tr><td class="k">τ max (shear)</td><td class="v" id="rTau">—</td></tr>
+        <tr class="hr"><td class="k">FoS — bending</td><td class="v" id="rFb">—</td></tr>
+        <tr><td class="k">FoS — shear (0.577σ<sub>y</sub>)</td><td class="v" id="rFs">—</td></tr>
+        <tr class="hr"><td class="k">Mass</td><td class="v" id="rMass">—</td></tr>
+        <tr><td class="k">Material cost</td><td class="v" id="rCost">—</td></tr>
+      </table>
+      <p class="warnnote" id="rWarn" style="display:none"></p>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot ink"></span>Stresses at the critical section</h2>
+      <canvas id="sstage" width="640" height="430"></canvas>
+      <p class="note" style="margin-top:6px">Left: bending stress painted on <em>your</em> section at x of |M|max — red tension, blue compression, dashed neutral axis. Right: shear stress profile τ(y) = VQ/(I·t) at x of |V|max.</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot green"></span>Verification vs. textbook</h2>
+      <div id="bVerifyBody"><p class="verify-msg">Set a single midspan point load, or a full-span UDL alone, to unlock the closed-form comparison.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ VIEW 3 · OPTIMIZER ============================ -->
+<div class="wrap" id="viewOpt" style="display:none">
+  <div class="stagearea">
+    <div class="toolbar" aria-label="Optimizer controls">
+      <button class="go" id="oStart">▶ Optimize</button>
+      <button id="oPause" disabled>⏸ Pause</button>
+      <button id="oStop" disabled>■ Stop</button>
+      <span class="sep"></span>
+      <button id="oApply" disabled>Apply result to Section Lab</button>
+      <button id="oReset" class="ghost">Reset</button>
+    </div>
+
+    <div class="canvasCard">
+      <canvas id="ostage" class="big" width="820" height="660" aria-label="Optimization evolution"></canvas>
+      <div class="statusbar">
+        <span id="oIter">iter 0 / 0</span>
+        <span id="oAcc">accept —</span>
+        <span id="oTemp">T —</span>
+        <span id="oInval">rejected-invalid 0</span>
+        <span class="hint">Grey dashes: your original sketch · orange: best design so far</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <h2><span class="dot"></span>Objectives &amp; constraints</h2>
+      <div class="optrow" style="display:block">
+        <input type="range" id="oW" min="0" max="100" value="80" aria-label="Objective weighting">
+        <div class="sliderlabels"><span>← lightest</span><span>stiffest →</span></div>
+      </div>
+      <div class="optrow"><span class="k">FoS target ≥</span><input type="number" class="num w44" id="oFos" value="2.0" min="1" step="0.1"></div>
+      <div class="optrow"><span class="k">Min thickness</span><input type="number" class="num w44" id="oTmin" value="6" min="1" step="1"> mm</div>
+      <div class="optrow"><span class="k">Envelope</span><input type="number" class="num w44" id="oEnv" value="1.2" min="1" max="3" step="0.1"> × original box</div>
+      <div class="optrow"><span class="k">Deflection ≤</span><label class="chk"><input type="checkbox" id="oDefOn" checked></label> L / <input type="number" class="num w44" id="oDefR" value="360" min="60" step="30"></div>
+      <div class="optrow"><span class="k">Iterations</span><input type="number" class="num" id="oIters" value="4000" min="200" step="500"></div>
+      <div class="optrow"><span class="k">Random seed</span><input type="number" class="num w44" id="oSeed" value="42" step="1"></div>
+      <p class="note">Optimizes for the span, loading and material currently set in the <b>Beam Lab</b>. The minimum-thickness rule is why the answer stays buildable: beam theory happily accepts paper-thin walls that would buckle in reality. <b>Envelope</b> is the available space: every candidate must fit inside the original sketch’s bounding box × this factor — without it, “stiffest” degenerates to “grow deeper forever,” since I ~ d³. <b>L/360</b> is the classic building-code serviceability limit for floor live load under brittle finishes (≈ the deflection at which plaster cracks); L/240 is common for total load, L/180 for roofs. It is adjustable because a deflection limit is a serviceability <em>choice</em>, not physics.</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot teal"></span>Scoreboard — you vs. the annealer</h2>
+      <div id="oScore"><p class="verify-msg">Run an optimization to populate the comparison.</p></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot ink"></span>Data factory — simulation dataset for ML</h2>
+      <div class="optrow"><span class="k">Samples</span><input type="number" class="num" id="dN" value="500" min="50" step="100"></div>
+      <div class="optrow"><span class="k">Seed</span><input type="number" class="num w44" id="dSeed" value="7" step="1">
+        <label class="chk"><input type="checkbox" id="dJit" checked> shape jitter</label></div>
+      <progress id="dProg" value="0" max="100" style="display:none"></progress>
+      <div class="optrow" style="margin-top:6px">
+        <button id="dGen">Generate dataset</button>
+        <button id="dDl" disabled>Download CSV</button>
+        <span class="mono" id="dMsg" style="font-size:11px;color:#8896A2"></span>
+      </div>
+      <p class="note">Randomizes span, loads, material, and geometry (anisotropic scaling ± vertex jitter of your sketch), then records section properties and full structural response per sample — training data for surrogate models that predict efficient designs.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ VIEW 4 · DESIGN STUDIO ============================ -->
+<div class="wrap" id="viewDs" style="display:none">
+  <div class="stagearea">
+    <div class="toolbar" aria-label="Design studio controls">
+      <label class="chk">Mode <select class="num" id="dsMode">
+        <option value="tourney">Match target (all families)</option>
+        <option value="single">Single family</option>
+      </select></label>
+      <label class="chk">Family <select class="num" id="dsFam"></select></label>
+      <label class="chk">Process <select class="num" id="dsProc"></select></label>
+      <label class="chk">Material <select class="num" id="dsMat"></select></label>
+      <label class="chk">Qty <input type="number" class="num w44" id="dsQty" value="100" min="1" step="10" title="Production quantity — amortizes tooling (extrusion dies)"></label>
+      <span class="sep"></span>
+      <button class="go" id="dsStart">▶ Run tournament</button>
+      <button id="dsStop" disabled>■ Stop</button>
+      <button id="dsApply" disabled>Apply to Section Lab</button>
+    </div>
+
+    <div class="canvasCard">
+      <canvas id="dstage" class="big" width="820" height="660" aria-label="Parametric design evolution"></canvas>
+      <div class="statusbar">
+        <span id="dsIter">ready</span>
+        <span id="dsAcc"></span>
+        <span id="dsTgt" style="color:#0B7285"></span>
+        <span class="hint">Loads &amp; span from ② · targets, iterations &amp; seed from ③ · material chosen here</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot ink"></span>Design log — the annealer narrates its milestones</h2>
+      <div class="loglist" id="dsLog"><span style="color:#9AA6B0">Press Optimize and the story of the run appears here: safety bought, mass trimmed, limits hit.</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <h2><span class="dot"></span>Parameters — every knob has a name</h2>
+      <div id="dsParams"></div>
+      <p class="note">Dimensions are seeded from the target shape — the family you pick is the manufacturable approximation the optimizer fits to it. Every knob has bounds you control, so every result is buildable by construction.</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot teal"></span>Manufacturing &amp; mechanics check</h2>
+      <div id="dsMet"></div>
+      <div id="dsRub" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot green"></span>Scoreboard</h2>
+      <div id="dsScore"><p class="verify-msg">Optimize to compare your starting point against the engineered optimum — and against the free-form “mathematician’s answer” from tab ③, if you’ve run one.</p></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot ink"></span>Why the design stopped improving</h2>
+      <div id="dsBinds"><p class="verify-msg">After a single-family run, the active constraints and parameter sensitivities appear here — the “why” behind the shape.</p></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="dot"></span>Data factory — optimized designs for ML</h2>
+      <div class="optrow"><span class="k">Samples</span><input type="number" class="num" id="dpN" value="100" min="10" step="10"></div>
+      <div class="optrow"><span class="k">Iters / sample</span><input type="number" class="num" id="dpIters" value="300" min="50" step="50"></div>
+      <div class="optrow"><span class="k">Seed</span><input type="number" class="num w44" id="dpSeed" value="11" step="1"></div>
+      <progress id="dpProg" value="0" max="100" style="display:none"></progress>
+      <div class="optrow" style="margin-top:6px">
+        <button id="dpGen">Generate dataset</button>
+        <button id="dpDl" disabled>Download CSV</button>
+        <span class="mono" id="dpMsg" style="font-size:11px;color:#8896A2"></span>
+      </div>
+      <p class="note">Each sample draws random requirements (span, loads, material, objective weight), picks a compatible family + process, runs a short optimization, and records the <em>optimized</em> dimensions with full performance and manufacturing metrics — an inverse-design dataset: requirements in, best manufacturable section out.</p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Section: Green’s theorem on polygon contours. Beam: statics + exact piecewise V, M; deflection by double integration of M/EI. Free-form optimizer: simulated annealing on sketch vertices with geometric validity gates. Design Studio: parametric section families with process-aware rules — AISC-style flange/web compactness, minimum gauges, die limits, weld-length and tooling-amortized costing — plus active-constraint and sensitivity reporting.
+</footer>
+
+<script>
+"use strict";
+/* =====================================================================
+   BEAM STUDIO — Stage 1 Section · Stage 2 Beam · Stage 3 Optimizer
+   The P_* functions below are PURE (no DOM, no globals): the same
+   source runs on the main thread and inside the optimizer Web Worker.
+   Units: section mm (y up) · beam m, kN · stress MPa.
+   ===================================================================== */
+
+/* ██ PURE SHARED MATH ██ */
+function P_signedArea(p){let a=0;for(let i=0;i<p.length;i++){const u=p[i],v=p[(i+1)%p.length];a+=u.x*v.y-v.x*u.y;}return a/2;}
+
+function P_integrals(p){
+  let A=0,Sx=0,Sy=0,Ixx=0,Iyy=0,Ixy=0;const n=p.length;
+  for(let i=0;i<n;i++){
+    const u=p[i],v=p[(i+1)%n],cr=u.x*v.y-v.x*u.y;
+    A+=cr; Sy+=(u.x+v.x)*cr; Sx+=(u.y+v.y)*cr;
+    Iyy+=(u.x*u.x+u.x*v.x+v.x*v.x)*cr;
+    Ixx+=(u.y*u.y+u.y*v.y+v.y*v.y)*cr;
+    Ixy+=(u.x*v.y+2*u.x*u.y+2*v.x*v.y+v.x*u.y)*cr;
+  }
+  return {A:A/2,Sx:Sx/6,Sy:Sy/6,Ixx:Ixx/12,Iyy:Iyy/12,Ixy:Ixy/24};
+}
+
+/* Full section properties. Winding is normalized by sign-fix keyed to
+   isHole, so caller-side orientation never matters. */
+function P_section(contours){
+  const cs=contours.filter(c=>c.pts.length>=3);
+  if(!cs.length)return null;
+  let A=0,Sx=0,Sy=0,Ixx=0,Iyy=0,Ixy=0;
+  for(const c of cs){
+    const g=P_integrals(c.pts);
+    const s=c.isHole?(g.A>0?-1:1):(g.A<0?-1:1);
+    A+=s*g.A;Sx+=s*g.Sx;Sy+=s*g.Sy;Ixx+=s*g.Ixx;Iyy+=s*g.Iyy;Ixy+=s*g.Ixy;
+  }
+  if(A<=1e-9)return null;
+  const cx=Sy/A,cy=Sx/A;
+  const Ix=Ixx-A*cy*cy,Iy=Iyy-A*cx*cx,Ixyc=Ixy-A*cx*cy;
+  if(Ix<=0||Iy<=0)return null;
+  let ymin=1/0,ymax=-1/0,xmin=1/0,xmax=-1/0;
+  for(const c of cs)for(const p of c.pts){
+    if(p.y<ymin)ymin=p.y;if(p.y>ymax)ymax=p.y;
+    if(p.x<xmin)xmin=p.x;if(p.x>xmax)xmax=p.x;
+  }
+  const ctop=ymax-cy,cbot=cy-ymin;
+  const Stop=Ix/Math.max(ctop,1e-12),Sbot=Ix/Math.max(cbot,1e-12);
+  const avg=(Ix+Iy)/2,R=Math.hypot((Ix-Iy)/2,Ixyc);
+  const I1=avg+R,I2=avg-R;
+  let th=0.5*Math.atan2(-2*Ixyc,Ix-Iy);
+  const Ith=avg+(Ix-Iy)/2*Math.cos(2*th)-Ixyc*Math.sin(2*th);
+  if(Math.abs(Ith-I1)>Math.abs(Ith-I2))th+=Math.PI/2;
+  return {A,cx,cy,Ix,Iy,Ixy:Ixyc,I1,I2,th,ctop,cbot,Stop,Sbot,
+          rx:Math.sqrt(Ix/A),ry:Math.sqrt(Iy/A),xmin,xmax,ymin,ymax};
+}
+
+function P_clipAbove(pts,yc){
+  const out=[];const n=pts.length;
+  for(let i=0;i<n;i++){
+    const u=pts[i],v=pts[(i+1)%n],uin=u.y>=yc,vin=v.y>=yc;
+    if(uin)out.push(u);
+    if(uin!==vin){const t=(yc-u.y)/(v.y-u.y);out.push({x:u.x+t*(v.x-u.x),y:yc});}
+  }
+  return out;
+}
+
+/* Q above y (about centroidal axis) and total cut width t */
+function P_slice(contours,props,yAbs){
+  const cs=contours.filter(c=>c.pts.length>=3);
+  let A=0,Sx=0;
+  for(const c of cs){
+    const cl=P_clipAbove(c.pts,yAbs);
+    if(cl.length>=3){
+      const g=P_integrals(cl);
+      const s=c.isHole?(g.A>0?-1:1):(g.A<0?-1:1);
+      A+=s*g.A;Sx+=s*g.Sx;
+    }
+  }
+  const Q=Sx-props.cy*A;
+  const iv=P_intervals(contours,yAbs,'y',props);
+  let t=0;for(const q of iv)t+=q[1]-q[0];
+  return {Q,t};
+}
+
+/* Material intervals cut by a line: axis 'y' → horizontal line at coord,
+   returns x-intervals; axis 'x' → vertical line, returns y-intervals.
+   Even-odd pairing across all contours (holes carve gaps naturally). */
+function P_intervals(contours,coord,axis,props){
+  const span=props?(axis==='y'?props.ymax-props.ymin:props.xmax-props.xmin):1;
+  const c0=coord+(span*1e-7+1e-9);
+  const xs=[];
+  for(const c of contours){
+    if(c.pts.length<3)continue;
+    const p=c.pts,n=p.length;
+    for(let i=0;i<n;i++){
+      const u=p[i],v=p[(i+1)%n];
+      const ua=axis==='y'?u.y:u.x, va=axis==='y'?v.y:v.x;
+      if((ua>c0)!==(va>c0)){
+        const f=(c0-ua)/(va-ua);
+        xs.push(axis==='y'?u.x+f*(v.x-u.x):u.y+f*(v.y-u.y));
+      }
+    }
+  }
+  xs.sort((a,b)=>a-b);
+  const out=[];
+  for(let i=0;i+1<xs.length;i+=2)out.push([xs[i],xs[i+1]]);
+  return out;
+}
+
+function P_segX(a,b,c,d){
+  const o=(p,q,r)=>Math.sign((q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x));
+  return o(a,b,c)!==o(a,b,d)&&o(c,d,a)!==o(c,d,b)&&
+         o(a,b,c)!==0&&o(a,b,d)!==0&&o(c,d,a)!==0&&o(c,d,b)!==0;
+}
+function P_selfX(p){
+  const n=p.length;
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
+    if(Math.abs(i-j)<=1||(i===0&&j===n-1))continue;
+    if(P_segX(p[i],p[(i+1)%n],p[j],p[(j+1)%n]))return true;
+  }
+  return false;
+}
+function P_pairX(p1,p2){
+  for(let i=0;i<p1.length;i++)for(let j=0;j<p2.length;j++)
+    if(P_segX(p1[i],p1[(i+1)%p1.length],p2[j],p2[(j+1)%p2.length]))return true;
+  return false;
+}
+function P_pointIn(pt,poly){
+  let inside=false;const n=poly.length;
+  for(let i=0,j=n-1;i<n;j=i++){
+    const a=poly[i],b=poly[j];
+    if((a.y>pt.y)!==(b.y>pt.y)&&
+       pt.x<(b.x-a.x)*(pt.y-a.y)/(b.y-a.y)+a.x)inside=!inside;
+  }
+  return inside;
+}
+
+/* Geometric validity gate for optimizer candidates */
+function P_validGeom(contours,tmin,envBox){
+  const cs=contours.filter(c=>c.pts.length>=3);
+  if(!cs.length)return false;
+  const outers=cs.filter(c=>!c.isHole),holes=cs.filter(c=>c.isHole);
+  if(!outers.length)return false;
+  for(const c of cs)if(P_selfX(c.pts))return false;
+  for(let i=0;i<cs.length;i++)for(let j=i+1;j<cs.length;j++)
+    if(P_pairX(cs[i].pts,cs[j].pts))return false;
+  for(const hcon of holes){
+    const ok=outers.some(o=>hcon.pts.every(p=>P_pointIn(p,o.pts)));
+    if(!ok)return false;
+  }
+  const props=P_section(contours);
+  if(!props)return false;
+  if(envBox){
+    if(props.xmin<envBox.x0-1e-6||props.xmax>envBox.x1+1e-6||
+       props.ymin<envBox.y0-1e-6||props.ymax>envBox.y1+1e-6)return false;
+  }
+  if(tmin>0){
+    // scan interior stations both ways; every material interval must be >= tmin.
+    // Stations within tmin of the extremes are skipped so naturally tapering
+    // boundaries (e.g. a circle's crown) aren't false positives.
+    const NS=21;
+    const y0=props.ymin+tmin,y1=props.ymax-tmin;
+    if(y1>y0)for(let i=0;i<NS;i++){
+      const y=y0+(i+0.5)/NS*(y1-y0);
+      for(const q of P_intervals(contours,y,'y',props))
+        if(q[1]-q[0]<tmin*0.999)return false;
+    }
+    const x0=props.xmin+tmin,x1=props.xmax-tmin;
+    if(x1>x0)for(let i=0;i<NS;i++){
+      const x=x0+(i+0.5)/NS*(x1-x0);
+      for(const q of P_intervals(contours,x,'x',props))
+        if(q[1]-q[0]<tmin*0.999)return false;
+    }
+  }
+  return true;
+}
+
+/* Simply supported beam. cfg={L, loads:[{P kN,a m}], udl:{on,w kN/m,x1,x2},
+   self:bool, mat:{E GPa, rho, sy MPa, cost}} — props supplies Ix (mm4) & A (mm2).
+   Returns SI arrays + maxima. */
+function P_beam(cfg,props,N){
+  const L=cfg.L;
+  const udls=[];
+  if(cfg.udl&&cfg.udl.on&&cfg.udl.x2>cfg.udl.x1)
+    udls.push({w:cfg.udl.w*1e3,x1:Math.max(0,cfg.udl.x1),x2:Math.min(L,cfg.udl.x2)});
+  let wSelf=0;
+  if(cfg.self){
+    wSelf=cfg.mat.rho*(props.A*1e-6)*9.81;
+    udls.push({w:wSelf,x1:0,x2:L});
+  }
+  const P=(cfg.loads||[]).map(l=>({P:l.P*1e3,a:Math.min(Math.max(l.a,0),L)}));
+  let sumP=0,sumM=0;
+  for(const p of P){sumP+=p.P;sumM+=p.P*p.a;}
+  for(const u of udls){const Wt=u.w*(u.x2-u.x1);sumP+=Wt;sumM+=Wt*(u.x1+u.x2)/2;}
+  const R2=sumM/L,R1=sumP-R2;
+  const xs=new Array(N),V=new Array(N),M=new Array(N);
+  for(let i=0;i<N;i++){
+    const x=L*i/(N-1);xs[i]=x;
+    let v=R1,mo=R1*x;
+    for(const p of P){if(x>p.a){v-=p.P;mo-=p.P*(x-p.a);}}
+    for(const u of udls){
+      const xi=Math.max(u.x1,Math.min(x,u.x2));
+      if(xi>u.x1){v-=u.w*(xi-u.x1);mo-=u.w*(xi-u.x1)*(x-(u.x1+xi)/2);}
+    }
+    V[i]=v;M[i]=mo;
+  }
+  const EI=(cfg.mat.E*1e9)*(props.Ix*1e-12);
+  const th=new Array(N).fill(0),def=new Array(N).fill(0),dx=L/(N-1);
+  for(let i=1;i<N;i++)th[i]=th[i-1]+(M[i-1]+M[i])/2*dx/EI;
+  for(let i=1;i<N;i++)def[i]=def[i-1]+(th[i-1]+th[i])/2*dx;
+  const C1=-def[N-1]/L;
+  for(let i=0;i<N;i++)def[i]+=C1*xs[i];
+  let iM=0,iV=0,iD=0;
+  for(let i=0;i<N;i++){
+    if(Math.abs(M[i])>Math.abs(M[iM]))iM=i;
+    if(Math.abs(V[i])>Math.abs(V[iV]))iV=i;
+    if(Math.abs(def[i])>Math.abs(def[iD]))iD=i;
+  }
+  return {xs,V,M,def,R1,R2,iM,iV,iD,wSelf,udls,P,L};
+}
+
+/* Max transverse shear stress via VQ/It over sampled slices.
+   Returns MPa; withProfile adds the full τ(y) arrays. */
+function P_tauMax(contours,props,Vabs,n,withProfile){
+  const I=props.Ix*1e-12;
+  const ys=withProfile?new Array(n):null, tau=withProfile?new Array(n):null;
+  let tauMax=0,yTauMax=props.cy;
+  for(let i=0;i<n;i++){
+    const y=props.ymin+(i+0.5)/n*(props.ymax-props.ymin);
+    const s=P_slice(contours,props,y);
+    const t=Math.max(s.t,1e-6);
+    const tv=Vabs*(s.Q*1e-9)/(I*(t*1e-3))/1e6;
+    if(withProfile){ys[i]=y;tau[i]=tv;}
+    if(s.t>0.5&&tv>tauMax){tauMax=tv;yTauMax=y;}
+  }
+  return {tauMax,yTauMax,ys,tau};
+}
+
+/* Objective evaluation. norm = {mass, dmm} from the original design.
+   opts = {wM 0..1, fosT, defOn, defR}. */
+function P_eval(contours,cfg,opts,norm){
+  const props=P_section(contours);
+  if(!props)return {ok:false};
+  const r=P_beam(cfg,props,121);
+  const I=props.Ix*1e-12;
+  const Mc=Math.abs(r.M[r.iM]);
+  const sig=Mc*(Math.max(props.ctop,props.cbot)*1e-3)/I/1e6;
+  const tau=P_tauMax(contours,props,Math.abs(r.V[r.iV]),15,false).tauMax;
+  const FoSb=sig>1e-9?cfg.mat.sy/sig:1e9;
+  const FoSs=tau>1e-9?0.577*cfg.mat.sy/tau:1e9;
+  const mass=cfg.mat.rho*(props.A*1e-6)*cfg.L;
+  const dmm=Math.abs(r.def[r.iD])*1e3;
+  const asym=Math.abs(props.Ixy)/Math.sqrt(Math.max(props.Ix*props.Iy,1e-12));
+  const sq=v=>v*v;
+  let pen=8*sq(Math.max(0,(opts.fosT-FoSb)/opts.fosT))
+         +8*sq(Math.max(0,(opts.fosT-FoSs)/opts.fosT))
+         +12*sq(Math.max(0,(asym-0.05)*10));
+  if(opts.defOn){
+    const lim=cfg.L*1000/opts.defR;
+    pen+=6*sq(Math.max(0,dmm/lim-1));
+  }
+  const obj=opts.wM*mass/Math.max(norm.mass,1e-9)
+           +(1-opts.wM)*dmm/Math.max(norm.dmm,1e-9)
+           +pen;
+  return {ok:true,obj,mass,cost:mass*cfg.mat.cost,dmm,FoSb,FoSs,sig,tau,asym,
+          A:props.A,Ix:props.Ix,eff:Math.min(props.Stop,props.Sbot)/props.A,pen};
+}
+
+function P_mulberry(seed){
+  let a=seed>>>0;
+  return function(){
+    a|=0;a=a+0x6D2B79F5|0;
+    let t=Math.imul(a^a>>>15,1|a);
+    t=t+Math.imul(t^t>>>7,61|t)^t;
+    return ((t^t>>>14)>>>0)/4294967296;
+  };
+}
+function P_gauss(rnd){
+  let u=0,v=0;
+  while(u===0)u=rnd();while(v===0)v=rnd();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+function P_copy(contours){return contours.map(c=>({isHole:!!c.isHole,pts:c.pts.map(p=>({x:p.x,y:p.y}))}));}
+function P_scaleAll(contours,anchor,sx,sy){
+  for(const c of contours)for(const p of c.pts){
+    p.x=anchor.x+(p.x-anchor.x)*sx;
+    p.y=anchor.y+(p.y-anchor.y)*sy;
+  }
+}
+function P_mutate(contours,sigma,rnd,anchor){
+  const c=P_copy(contours);
+  const r=rnd();
+  if(r<0.75){
+    const k=1+Math.floor(rnd()*3);
+    for(let j=0;j<k;j++){
+      const ci=Math.floor(rnd()*c.length);
+      const vi=Math.floor(rnd()*c[ci].pts.length);
+      c[ci].pts[vi].x+=P_gauss(rnd)*sigma;
+      c[ci].pts[vi].y+=P_gauss(rnd)*sigma;
+    }
+  }else if(r<0.87){
+    const s=Math.exp(P_gauss(rnd)*0.05);P_scaleAll(c,anchor,s,s);
+  }else{
+    const s=Math.exp(P_gauss(rnd)*0.07);P_scaleAll(c,anchor,1,s);
+  }
+  return c;
+}
+
+/* ██ PURE PARAMETRIC LAYER (templates · rubric · cost) ██ */
+function T_arc(cx,cy,r,a0,a1,n){
+  const pts=[];
+  for(let i=0;i<=n;i++){const a=a0+(a1-a0)*i/n;pts.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)});}
+  return pts;
+}
+function T_rrect(x,y,w,h,r){
+  if(r<=0.3)return [{x,y},{x:x+w,y},{x:x+w,y:y+h},{x,y:y+h}];
+  r=Math.min(r,w/2-0.5,h/2-0.5);
+  const PI=Math.PI,pts=[];
+  pts.push(...T_arc(x+r,y+r,r,PI,1.5*PI,4));
+  pts.push(...T_arc(x+w-r,y+r,r,1.5*PI,2*PI,4));
+  pts.push(...T_arc(x+w-r,y+h-r,r,0,0.5*PI,4));
+  pts.push(...T_arc(x+r,y+h-r,r,0.5*PI,PI,4));
+  return pts;
+}
+function T_ibeam(p){
+  const d=p.d,bf=p.bf,tf=p.tf,tw=p.tw,r=Math.max(p.r||0,0);
+  if(!(d>2*tf+2*r+6&&bf>tw+2*r+6&&tf>=2&&tw>=2))return null;
+  const h=bf/2,w=tw/2,P2=Math.PI/2,PI=Math.PI,pts=[];
+  pts.push({x:-h,y:0},{x:h,y:0},{x:h,y:tf});
+  if(r>0.3){
+    pts.push(...T_arc(w+r,tf+r,r,-P2,-PI,4));
+    pts.push(...T_arc(w+r,d-tf-r,r,PI,P2,4));
+  }else pts.push({x:w,y:tf},{x:w,y:d-tf});
+  pts.push({x:h,y:d-tf},{x:h,y:d},{x:-h,y:d},{x:-h,y:d-tf});
+  if(r>0.3){
+    pts.push(...T_arc(-w-r,d-tf-r,r,P2,0,4));
+    pts.push(...T_arc(-w-r,tf+r,r,0,-P2,4));
+  }else pts.push({x:-w,y:d-tf},{x:-w,y:tf});
+  pts.push({x:-h,y:tf});
+  return [{isHole:false,pts}];
+}
+function T_box(p){
+  const B=p.B,D=p.D,t=p.t,r=Math.max(p.r||0,0);
+  if(!(B>2*t+2*r+4&&D>2*t+2*r+4&&t>=1.2))return null;
+  return [{isHole:false,pts:T_rrect(-B/2,0,B,D,r>0.3?r+t:0)},
+          {isHole:true, pts:T_rrect(-B/2+t,t,B-2*t,D-2*t,r>0.3?r:0)}];
+}
+function T_channel(p){
+  const d=p.d,bf=p.bf,tf=p.tf,tw=p.tw,r=Math.max(p.r||0,0);
+  if(!(d>2*tf+2*r+6&&bf>tw+r+4&&tf>=2&&tw>=2))return null;
+  const P2=Math.PI/2,PI=Math.PI,pts=[];
+  pts.push({x:0,y:0},{x:bf,y:0},{x:bf,y:tf});
+  if(r>0.3){
+    pts.push(...T_arc(tw+r,tf+r,r,-P2,-PI,4));
+    pts.push(...T_arc(tw+r,d-tf-r,r,PI,P2,4));
+  }else pts.push({x:tw,y:tf},{x:tw,y:d-tf});
+  pts.push({x:bf,y:d-tf},{x:bf,y:d},{x:0,y:d});
+  return [{isHole:false,pts}];
+}
+function T_tsec(p){
+  const bf=p.bf,tf=p.tf,dw=p.dw,tw=p.tw,r=Math.max(p.r||0,0);
+  if(!(bf>tw+2*r+6&&dw>r+6&&tf>=2&&tw>=2))return null;
+  const w=tw/2,P2=Math.PI/2,PI=Math.PI,pts=[];
+  pts.push({x:-w,y:0},{x:w,y:0});
+  if(r>0.3)pts.push(...T_arc(w+r,dw-r,r,PI,P2,4));
+  else pts.push({x:w,y:dw});
+  pts.push({x:bf/2,y:dw},{x:bf/2,y:dw+tf},{x:-bf/2,y:dw+tf},{x:-bf/2,y:dw});
+  if(r>0.3)pts.push(...T_arc(-w-r,dw-r,r,P2,0,4));
+  else pts.push({x:-w,y:dw});
+  return [{isHole:false,pts}];
+}
+function T_rect(p){
+  const b=p.b,h=p.h;
+  if(!(b>4&&h>4))return null;
+  return [{isHole:false,pts:[{x:-b/2,y:0},{x:b/2,y:0},{x:b/2,y:h},{x:-b/2,y:h}]}];
+}
+function T_build(family,p){
+  switch(family){
+    case 'ibeam':return T_ibeam(p);
+    case 'box':return T_box(p);
+    case 'channel':return T_channel(p);
+    case 'tsec':return T_tsec(p);
+    case 'rect':return T_rect(p);
+  }
+  return null;
+}
+
+/* Process-aware cost: material + weld length + tooling amortization */
+function P_cost(family,process,p,mass,L,mat,qty){
+  const q=Math.max(qty||1,1);
+  if(process==='welded'){
+    const nW=family==='box'?4:family==='ibeam'?4:family==='channel'?4:family==='tsec'?2:0;
+    return mass*mat.cost*1.12+nW*L*8;
+  }
+  if(process==='extrusion')return mass*mat.cost*1.35+3800/q;
+  return mass*mat.cost;
+}
+
+/* Manufacturability & local-stability rubric.
+   hard items reject the candidate outright; soft items enter as penalty.
+   Limits are AISC-style nonslender/compactness checks — the honest reason
+   thin-walled "optimal" sections fail before they yield. */
+function P_rubric(family,process,p,mat){
+  const items=[];
+  const push=(name,status,hard,why)=>items.push({name,status,hard:!!hard,why});
+  const compat=P_procMats(process).indexOf(mat.key)>=0;
+  push('Material–process match — '+mat.name,compat?'pass':'fail',true,
+    compat?'This alloy/species is routinely produced by this route.'
+          :'This material cannot be made by this process — the process defines the factory, and the material must fit it. Pick a compatible pairing.');
+  const gle=(v,lim)=>v<=lim?(v>0.9*lim?'marginal':'pass'):'fail';
+  const gge=(v,lim)=>v>=lim?(v<1.1*lim?'marginal':'pass'):'fail';
+  const E=mat.E*1000,Fy=mat.sy;
+  const lamF=0.56*Math.sqrt(E/Fy),lamW=1.49*Math.sqrt(E/Fy),
+        lamB=1.40*Math.sqrt(E/Fy),lamT=0.75*Math.sqrt(E/Fy);
+  const tmin=process==='welded'?6:process==='extrusion'?1.5:process==='timber'?38:5;
+  const r1=x=>Math.round(x*10)/10;
+  if(family==='ibeam'||family==='channel'){
+    const bo=family==='ibeam'?p.bf/2:(p.bf-p.tw);
+    push('Flange local buckling — b/t '+r1(bo/p.tf)+' ≤ '+r1(lamF),gle(bo/p.tf,lamF),true,
+      'AISC-style compactness: a wider-and-thinner flange buckles locally before it yields — the trap behind every “just thin the flange” optimum.');
+    const hw=p.d-2*p.tf;
+    push('Web slenderness — h/t '+r1(hw/p.tw)+' ≤ '+r1(lamW),gle(hw/p.tw,lamW),true,
+      'Slender webs buckle in shear and bending long before the material reaches yield.');
+    push('Minimum gauge — t ≥ '+tmin+' mm',gge(Math.min(p.tf,p.tw),tmin),true,
+      process==='welded'?'Thinner plate distorts and burns through when welded.':'Below the rolling-mill minimum gauge.');
+    push('Proportion — d/b_f '+r1(p.d/p.bf)+' ≤ 3.5',gle(p.d/p.bf,3.5),false,
+      'Very deep, narrow beams are awkward to handle and prone to lateral-torsional buckling unless braced.');
+    if(process==='rolled')push('Root fillet — r ≥ 0.6·t_f',gge(p.r||0,0.6*p.tf),false,
+      'Rolls cannot form a sharp interior corner, and a generous root radius eases the stress flow into the web.');
+    if(process==='welded')push('Flat plates — fillet omitted','pass',false,
+      'A plate girder is flat plates plus fillet welds; there is no rolled root radius, so watch the weld toe for fatigue instead.');
+  }else if(family==='box'){
+    const wall=Math.max((p.B-2*p.t)/p.t,(p.D-2*p.t)/p.t);
+    push('Wall local buckling — b/t '+r1(wall)+' ≤ '+r1(lamB),gle(wall,lamB),true,
+      'Thin box walls buckle in compression before yield — the classic failure of “just make the walls thinner”.');
+    push('Minimum wall — t ≥ '+tmin+' mm',gge(p.t,tmin),true,
+      process==='extrusion'?'Below this the die tongue tears and the profile won’t fill.':'Weldable plate floor.');
+    push('Proportion — D/B '+r1(p.D/p.B)+' ≤ 3.0',gle(p.D/p.B,3.0),false,
+      'Very tall, narrow tubes twist easily and are hard to connect to.');
+    if(process==='extrusion'){
+      const ccd=Math.sqrt(p.B*p.B+p.D*p.D);
+      push('Die size — circumscribing Ø '+Math.round(ccd)+' ≤ 320 mm',gle(ccd,320),true,
+        'The profile must fit the press container; a bigger circle means a press you probably don’t have.');
+      push('Corner radius — r ≥ 0.5·t',gge(p.r||0,0.5*p.t),false,
+        'Sharp internal corners concentrate stress and wear the die.');
+    }
+  }else if(family==='tsec'){
+    push('Flange local buckling — b/t '+r1((p.bf/2)/p.tf)+' ≤ '+r1(lamF),gle((p.bf/2)/p.tf,lamF),true,
+      'Outstanding flange halves buckle like any I-beam flange.');
+    push('Stem slenderness — d/t '+r1(p.dw/p.tw)+' ≤ '+r1(lamT),gle(p.dw/p.tw,lamT),true,
+      'A tee stem is an unstiffened outstand — its limit is far stricter than an I-beam web’s.');
+    push('Minimum gauge — t ≥ '+tmin+' mm',gge(Math.min(p.tf,p.tw),tmin),true,'Process floor for the thinnest element.');
+    if(process==='extrusion')push('Near-uniform wall — ratio ≤ 2.5',gle(Math.max(p.tf/p.tw,p.tw/p.tf),2.5),false,
+      'Walls of very different thickness cool at different rates and warp the extrusion.');
+  }else if(family==='rect'){
+    push('Minimum breadth — b ≥ '+tmin+' mm',gge(p.b,tmin),true,'Smallest stocked sawn dimension.');
+    push('Stability — h/b '+r1(p.h/p.b)+' ≤ 6',gle(p.h/p.b,6),false,
+      'Deep, narrow joists roll over sideways unless blocked or braced — depth is only useful if it stays upright.');
+  }
+  let s=0;for(const it of items)s+=it.status==='pass'?1:it.status==='marginal'?0.5:0;
+  return {items,score:items.length?s/items.length:1,
+          hardFail:items.some(it=>it.hard&&it.status==='fail')};
+}
+
+/* Parametric objective: build → hard rubric gate → structural eval →
+   process cost → soft rubric penalty. */
+function P_evalP(family,process,params,cfg,opts,norm,qty){
+  const contours=T_build(family,params);
+  if(!contours)return {ok:false};
+  const rub=P_rubric(family,process,params,cfg.mat);
+  if(rub.hardFail)return {ok:false,hardFail:true,rub};
+  const base=P_eval(contours,cfg,opts,norm);
+  if(!base.ok)return {ok:false};
+  base.cost=P_cost(family,process,params,base.mass,cfg.L,cfg.mat,qty);
+  base.rub=rub;
+  base.obj+=2*Math.pow(1-rub.score,2);
+  base.contours=contours;
+  return base;
+}
+function P_mutP(params,bounds,sig,rnd){
+  const keys=Object.keys(bounds),q={};
+  for(const k of keys)q[k]=params[k];
+  const n=1+(rnd()<0.35?1:0);
+  for(let i=0;i<n;i++){
+    const k=keys[Math.floor(rnd()*keys.length)];
+    const lo=bounds[k][0],hi=bounds[k][1];
+    if(hi-lo<1e-9)continue;
+    q[k]=Math.min(hi,Math.max(lo,q[k]+P_gauss(rnd)*sig*(hi-lo)));
+  }
+  return q;
+}
+
+/* Which materials each process can actually produce */
+function P_procMats(process){
+  if(process==='rolled')return ['steel','ti'];
+  if(process==='welded')return ['steel','alu','ti'];
+  if(process==='extrusion')return ['alu'];
+  if(process==='timber')return ['wood'];
+  return [];
+}
+
+/* Seed a family's parameters from a target shape: match its overall depth,
+   width, and (roughly) its area, clamped into the user's bounds. */
+function P_seedParams(family,bounds,tp){
+  const cl=(k,v)=>{const b=bounds[k];return Math.min(b[1],Math.max(b[0],v));};
+  const H=tp?tp.ymax-tp.ymin:200, W2=tp?tp.xmax-tp.xmin:120, A=tp?tp.A:5000;
+  if(family==='ibeam'){
+    const d=cl('d',H),bf=cl('bf',W2),t=A/(2*bf+d);
+    return {d,bf,tf:cl('tf',t),tw:cl('tw',t*0.8),r:cl('r',8)};
+  }
+  if(family==='box'){
+    const B=cl('B',W2),D=cl('D',H),t=A/(2*(B+D));
+    return {B,D,t:cl('t',t),r:cl('r',4)};
+  }
+  if(family==='channel'){
+    const d=cl('d',H),bf=cl('bf',W2*0.6),t=A/(2*bf+d);
+    return {d,bf,tf:cl('tf',t),tw:cl('tw',t),r:cl('r',6)};
+  }
+  if(family==='tsec'){
+    const dw=cl('dw',H*0.85),bf=cl('bf',W2),t=A/(bf+dw);
+    return {bf,tf:cl('tf',t),dw,tw:cl('tw',t),r:cl('r',6)};
+  }
+  if(family==='rect'){
+    return {b:cl('b',A/Math.max(H,1)),h:cl('h',H)};
+  }
+  return null;
+}
+
+/* ██ WORKER MAIN (runs only inside the Blob worker) ██ */
+function W_main(){
+  let job=null,jobP=null,jobT=null;
+  self.onmessage=e=>{
+    const d=e.data;
+    if(d.cmd==='stop'){if(job)job.stop=true;if(jobP)jobP.stop=true;if(jobT)jobT.stop=true;}
+    else if(d.cmd==='pause'){if(job)job.pause=d.v;if(jobP)jobP.pause=d.v;}
+    else if(d.cmd==='start'){startSA(d);}
+    else if(d.cmd==='startP'){startP(d);}
+    else if(d.cmd==='tourney'){startTourney(d);}
+    else if(d.cmd==='pdataset'){runPDataset(d);}
+    else if(d.cmd==='dataset'){runDataset(d);}
+  };
+
+  function startSA(d){
+    const rnd=P_mulberry(d.opts.seed);
+    const orig=P_copy(d.contours);
+    const props0=P_section(orig);
+    const r0=P_beam(d.cfg,props0,121);
+    const mass0=d.cfg.mat.rho*(props0.A*1e-6)*d.cfg.L;
+    const dmm0=Math.max(Math.abs(r0.def[r0.iD])*1e3,1e-6);
+    const norm={mass:mass0,dmm:dmm0};
+    const anchor={x:props0.cx,y:props0.cy};
+    const bw=props0.xmax-props0.xmin,bh=props0.ymax-props0.ymin;
+    const f=d.opts.env,ex=bw*(f-1)/2,ey=bh*(f-1)/2;
+    const envBox={x0:props0.xmin-ex,x1:props0.xmax+ex,y0:props0.ymin-ey,y1:props0.ymax+ey};
+    const diag=Math.hypot(bw,bh);
+    const e0=P_eval(orig,d.cfg,d.opts,norm);
+    self.postMessage({type:'init',orig:e0,norm});
+    job={
+      stop:false,pause:false,rnd,anchor,envBox,diag,norm,
+      cfg:d.cfg,opts:d.opts,iters:d.opts.iters,
+      cur:orig,curE:e0,best:P_copy(orig),bestE:e0,
+      i:0,acc:0,tried:0,inval:0,sigma:0.045*diag,
+      T0:0.10*Math.abs(e0.obj)+1e-6,lastBest:0,
+    };
+    schedule();
+  }
+  function schedule(){setTimeout(step,0);}
+  function step(){
+    if(!job)return;
+    if(job.stop){finish();return;}
+    if(job.pause){setTimeout(step,80);return;}
+    const t0=Date.now();
+    while(job.i<job.iters&&Date.now()-t0<28){
+      iterate();
+    }
+    postTick();
+    if(job.i>=job.iters)finish();else schedule();
+  }
+  function iterate(){
+    const j=job;j.i++;j.tried++;
+    const T=j.T0*Math.pow(1e-4,j.i/j.iters);
+    const cand=P_mutate(j.cur,j.sigma,j.rnd,j.anchor);
+    if(!P_validGeom(cand,j.opts.tmin,j.envBox)){j.inval++;return;}
+    const e=P_eval(cand,j.cfg,j.opts,j.norm);
+    if(!e.ok){j.inval++;return;}
+    const dE=e.obj-j.curE.obj;
+    if(dE<0||j.rnd()<Math.exp(-dE/Math.max(T,1e-12))){
+      j.cur=cand;j.curE=e;j.acc++;
+      if(e.obj<j.bestE.obj){
+        j.best=P_copy(cand);j.bestE=e;
+        const now=Date.now();
+        if(now-j.lastBest>40){
+          j.lastBest=now;
+          self.postMessage({type:'best',iter:j.i,contours:j.best,m:j.bestE});
+        }
+      }
+    }
+    if(j.tried%200===0){
+      const rate=j.acc/j.tried;
+      if(rate>0.5)j.sigma=Math.min(j.sigma*1.3,0.15*j.diag);
+      else if(rate<0.2)j.sigma=Math.max(j.sigma*0.75,0.002*j.diag);
+      j.acc=0;j.tried=0;
+    }
+  }
+  function postTick(){
+    const j=job;
+    self.postMessage({type:'tick',iter:j.i,iters:j.iters,
+      T:j.T0*Math.pow(1e-4,j.i/j.iters),
+      acc:j.tried?j.acc/j.tried:0,inval:j.inval,
+      curObj:j.curE.obj,bestObj:j.bestE.obj,
+      m:{mass:j.bestE.mass,dmm:j.bestE.dmm}});
+  }
+  function finish(){
+    self.postMessage({type:'done',iter:job.i,contours:job.best,m:job.bestE});
+    job=null;
+  }
+
+  /* ---- parametric mode ---- */
+  function slimP(e){
+    return {obj:e.obj,mass:e.mass,cost:e.cost,dmm:e.dmm,FoSb:e.FoSb,FoSs:e.FoSs,
+            sig:e.sig,tau:e.tau,eff:e.eff,A:e.A,Ix:e.Ix,rub:e.rub};
+  }
+  function startP(d){
+    const rnd=P_mulberry(d.opts.seed);
+    const e0=P_evalP(d.family,d.process,d.params,d.cfg,d.opts,{mass:1,dmm:1},d.qty);
+    if(!e0.ok){
+      self.postMessage({type:'perr',msg:e0.hardFail
+        ?'starting design fails a hard limit — clear the red rubric rows first'
+        :'starting parameters produce an invalid section'});
+      return;
+    }
+    /* normalize against the free-form target when provided: obj = 1.0 means
+       "matches the target's performance profile" — same scale as the tournament */
+    let norm={mass:e0.mass,dmm:Math.max(e0.dmm,1e-6)},tgt=null;
+    if(d.target){
+      const tp=P_section(d.target);
+      if(tp){
+        const tr=P_beam(d.cfg,tp,121);
+        const tmass=d.cfg.mat.rho*(tp.A*1e-6)*d.cfg.L;
+        const tdmm=Math.max(Math.abs(tr.def[tr.iD])*1e3,1e-6);
+        const tI=tp.Ix*1e-12;
+        const tsig=Math.abs(tr.M[tr.iM])*(Math.max(tp.ctop,tp.cbot)*1e-3)/tI/1e6;
+        norm={mass:tmass,dmm:tdmm};
+        tgt={mass:tmass,dmm:tdmm,FoSb:tsig>1e-9?d.cfg.mat.sy/tsig:1e9};
+      }
+    }
+    const e1=P_evalP(d.family,d.process,d.params,d.cfg,d.opts,norm,d.qty);
+    self.postMessage({type:'init',mode:'param',orig:slimP(e1),tgt});
+    jobP={rnd,d,norm,cur:d.params,curE:e1,best:d.params,bestE:e1,
+          i:0,acc:0,tried:0,inval:0,sig:0.07,
+          T0:0.10*Math.abs(e1.obj)+1e-6,lastBest:0,stop:false,pause:false};
+    setTimeout(stepP,0);
+  }
+  function stepP(){
+    const j=jobP;if(!j)return;
+    if(j.stop){finishP();return;}
+    if(j.pause){setTimeout(stepP,80);return;}
+    const t0=Date.now();
+    while(j.i<j.d.opts.iters&&Date.now()-t0<28){
+      j.i++;j.tried++;
+      const T=j.T0*Math.pow(1e-4,j.i/j.d.opts.iters);
+      const cand=P_mutP(j.cur,j.d.bounds,j.sig,j.rnd);
+      const e=P_evalP(j.d.family,j.d.process,cand,j.d.cfg,j.d.opts,j.norm,j.d.qty);
+      if(!e.ok){j.inval++;continue;}
+      const dE=e.obj-j.curE.obj;
+      if(dE<0||j.rnd()<Math.exp(-dE/Math.max(T,1e-12))){
+        j.cur=cand;j.curE=e;j.acc++;
+        if(e.obj<j.bestE.obj){
+          j.best=cand;j.bestE=e;
+          const now=Date.now();
+          if(now-j.lastBest>40){
+            j.lastBest=now;
+            self.postMessage({type:'best',mode:'param',iter:j.i,
+              params:cand,contours:e.contours,m:slimP(e)});
+          }
+        }
+      }
+      if(j.tried%150===0){
+        const rate=j.acc/j.tried;
+        if(rate>0.5)j.sig=Math.min(j.sig*1.3,0.2);
+        else if(rate<0.2)j.sig=Math.max(j.sig*0.75,0.005);
+        j.acc=0;j.tried=0;
+      }
+    }
+    self.postMessage({type:'tick',mode:'param',iter:j.i,iters:j.d.opts.iters,
+      T:j.T0*Math.pow(1e-4,j.i/j.d.opts.iters),
+      acc:j.tried?j.acc/j.tried:0,inval:j.inval,
+      curObj:j.curE.obj,bestObj:j.bestE.obj,
+      m:{mass:j.bestE.mass,dmm:j.bestE.dmm}});
+    if(j.i>=j.d.opts.iters)finishP();else setTimeout(stepP,0);
+  }
+  function finishP(){
+    const j=jobP;if(!j)return;jobP=null;
+    const d=j.d,p=j.best,e=j.bestE;
+    /* active constraints — the central design-optimization lesson */
+    const binds=[];
+    if(Math.abs(e.FoSb-d.opts.fosT)/d.opts.fosT<0.05)
+      binds.push('Bending FoS is sitting on the target ('+d.opts.fosT.toFixed(1)+') — strength governs this design.');
+    if(Math.abs(e.FoSs-d.opts.fosT)/d.opts.fosT<0.05)
+      binds.push('Shear FoS is at the target — the web is working at its allowable.');
+    if(d.opts.defOn){
+      const dl=d.cfg.L*1000/d.opts.defR;
+      if(e.dmm>0.95*dl)binds.push('Deflection is at the L/'+d.opts.defR+' limit — stiffness, not strength, governs.');
+    }
+    for(const k in d.bounds){
+      const lo=d.bounds[k][0],hi=d.bounds[k][1],rg=hi-lo;
+      if(rg<1e-9)continue;
+      if(p[k]-lo<0.02*rg)binds.push('Parameter “'+k+'” is pinned at its lower bound ('+lo+' mm).');
+      else if(hi-p[k]<0.02*rg)binds.push('Parameter “'+k+'” is pinned at its upper bound ('+hi+' mm).');
+    }
+    for(const it of e.rub.items)
+      if(it.hard&&it.status==='marginal')binds.push('Riding a hard limit: '+it.name+'.');
+    if(!binds.length)binds.push('No constraint is active — the design sits in the interior, shaped by the objective weights alone.');
+    /* finite-difference sensitivities, normalized per full parameter range */
+    const sens=[];
+    for(const k in d.bounds){
+      const lo=d.bounds[k][0],hi=d.bounds[k][1];
+      if(hi-lo<1e-9)continue;
+      const h=0.02*(hi-lo);
+      const pa={},pb={};
+      for(const kk in p){pa[kk]=p[kk];pb[kk]=p[kk];}
+      pa[k]=Math.min(hi,p[k]+h);pb[k]=Math.max(lo,p[k]-h);
+      const ea=P_evalP(d.family,d.process,pa,d.cfg,d.opts,j.norm,d.qty);
+      const eb=P_evalP(d.family,d.process,pb,d.cfg,d.opts,j.norm,d.qty);
+      let hiE=null,loE=null,dd=0;
+      if(ea.ok&&eb.ok){hiE=ea;loE=eb;dd=pa[k]-pb[k];}
+      else if(ea.ok){hiE=ea;loE=e;dd=pa[k]-p[k];}          // one-sided: lower side hits a hard limit
+      else if(eb.ok){hiE=e;loE=eb;dd=p[k]-pb[k];}          // one-sided: upper side hits a hard limit
+      if(hiE&&dd>1e-9)sens.push({k,
+        mass:(hiE.mass-loE.mass)/dd*(hi-lo)/Math.max(e.mass,1e-9),
+        dmm:(hiE.dmm-loE.dmm)/dd*(hi-lo)/Math.max(e.dmm,1e-9)});
+    }
+    self.postMessage({type:'doneP',iter:j.i,params:p,contours:e.contours,
+      m:slimP(e),binds,sens});
+  }
+
+  /* ---- family tournament: which standard section best matches the target? ---- */
+  function startTourney(d){
+    const rnd=P_mulberry(d.seed);
+    const tp=P_section(d.target);
+    if(!tp){self.postMessage({type:'perr',msg:'target shape is invalid — draw or optimize a section first'});return;}
+    const tr=P_beam(d.cfg,tp,121);
+    const tmass=d.cfg.mat.rho*(tp.A*1e-6)*d.cfg.L;
+    const tdmm=Math.max(Math.abs(tr.def[tr.iD])*1e3,1e-6);
+    const tI=tp.Ix*1e-12;
+    const tsig=Math.abs(tr.M[tr.iM])*(Math.max(tp.ctop,tp.cbot)*1e-3)/tI/1e6;
+    self.postMessage({type:'tinit',target:{mass:tmass,dmm:tdmm,
+      FoSb:tsig>1e-9?d.cfg.mat.sy/tsig:1e9,A:tp.A,Ix:tp.Ix},nf:d.families.length});
+    jobT={rnd,d,norm:{mass:tmass,dmm:tdmm},fi:0,results:[],sa:null,stop:false};
+    setTimeout(tStep,0);
+  }
+  function tStep(){
+    const j=jobT;if(!j)return;
+    if(j.stop){self.postMessage({type:'tdone',results:j.results,winner:tWinner(j),stopped:true});jobT=null;return;}
+    if(!j.sa){
+      if(j.fi>=j.d.families.length){
+        self.postMessage({type:'tdone',results:j.results,winner:tWinner(j)});
+        jobT=null;return;
+      }
+      const F=j.d.families[j.fi];
+      let p0=F.params0;
+      let e=P_evalP(F.family,F.process,p0,j.d.cfg,j.d.opts,j.norm,j.d.qty);
+      if(!e.ok){ // seed infeasible (e.g. thin seed under min gauge) — fall back to mid-bounds
+        const mid={};for(const k in F.bounds)mid[k]=(F.bounds[k][0]+F.bounds[k][1])/2;
+        e=P_evalP(F.family,F.process,mid,j.d.cfg,j.d.opts,j.norm,j.d.qty);
+        p0=mid;
+      }
+      if(!e.ok){
+        j.results.push({ok:false,family:F.family,process:F.process});
+        self.postMessage({type:'tfam',family:F.family,ok:false,fi:j.fi,nf:j.d.families.length});
+        j.fi++;setTimeout(tStep,0);return;
+      }
+      j.sa={F,i:0,cur:p0,curE:e,best:p0,bestE:e,sig:0.08,acc:0,tried:0,
+            T0:0.10*Math.abs(e.obj)+1e-6,lastBest:0};
+    }
+    const s=j.sa,F=s.F,iters=j.d.opts.iters;
+    const t0=Date.now();
+    while(s.i<iters&&Date.now()-t0<28){
+      s.i++;s.tried++;
+      const T=s.T0*Math.pow(1e-4,s.i/iters);
+      const cand=P_mutP(s.cur,F.bounds,s.sig,j.rnd);
+      const e=P_evalP(F.family,F.process,cand,j.d.cfg,j.d.opts,j.norm,j.d.qty);
+      if(!e.ok)continue;
+      const dE=e.obj-s.curE.obj;
+      if(dE<0||j.rnd()<Math.exp(-dE/Math.max(T,1e-12))){
+        s.cur=cand;s.curE=e;s.acc++;
+        if(e.obj<s.bestE.obj){
+          s.best=cand;s.bestE=e;
+          const now=Date.now();
+          if(now-s.lastBest>50){s.lastBest=now;
+            self.postMessage({type:'tbest',family:F.family,fi:j.fi,nf:j.d.families.length,
+              iter:s.i,iters,params:cand,contours:e.contours,m:slimP(e)});}
+        }
+      }
+      if(s.tried%150===0){
+        const rate=s.acc/s.tried;
+        if(rate>0.5)s.sig=Math.min(s.sig*1.3,0.2);
+        else if(rate<0.2)s.sig=Math.max(s.sig*0.75,0.005);
+        s.acc=0;s.tried=0;
+      }
+    }
+    if(s.i>=iters){
+      j.results.push({ok:true,family:F.family,process:F.process,params:s.best,m:slimP(s.bestE)});
+      self.postMessage({type:'tfam',family:F.family,ok:true,params:s.best,m:slimP(s.bestE),
+        fi:j.fi,nf:j.d.families.length,gi:(j.fi+1)*iters});
+      j.sa=null;j.fi++;
+    }
+    setTimeout(tStep,0);
+  }
+  function tWinner(j){
+    let win=-1,wo=1/0;
+    j.results.forEach((r,i)=>{if(r.ok&&r.m.obj<wo){wo=r.m.obj;win=i;}});
+    return win;
+  }
+
+  /* ---- dataset of OPTIMIZED designs: requirements in → best section out ---- */
+  function runPDataset(d){
+    const rnd=P_mulberry(d.seed);
+    const GEO=['d','bf','tf','tw','r','B','D','t','b','h'];
+    const rows=[];let i=0;
+    const step=()=>{
+      const t0=Date.now();
+      while(i<d.n&&Date.now()-t0<28){
+        const mat=d.mats[Math.floor(rnd()*d.mats.length)];
+        const cand=[];
+        for(const F of d.fams){
+          const proc=F.procs.find(pk=>P_procMats(pk).indexOf(mat.key)>=0);
+          if(proc)cand.push({family:F.family,process:proc,bounds:F.bounds});
+        }
+        if(!cand.length)continue;
+        const F=cand[Math.floor(rnd()*cand.length)];
+        const B={};for(const k in F.bounds)B[k]=F.bounds[k];
+        if(F.process==='welded'&&B.r)B.r=[0,0];
+        const L=2+rnd()*6,P=2+rnd()*28,a=L*(0.1+rnd()*0.8),w=rnd()<0.15?0:rnd()*12;
+        const cfg={L,loads:[{P,a}],udl:{on:w>0,w,x1:0,x2:L},self:false,mat};
+        const wM=Math.round(rnd()*100)/100;
+        const opts=Object.assign({},d.opts,{wM});
+        let p0=null,e=null;
+        for(let tr2=0;tr2<8&&(!e||!e.ok);tr2++){
+          p0={};for(const k in B)p0[k]=B[k][0]+(0.2+0.6*rnd())*(B[k][1]-B[k][0]);
+          if(B.r&&F.process==='welded')p0.r=0;
+          e=P_evalP(F.family,F.process,p0,cfg,opts,{mass:1,dmm:1},d.qty);
+        }
+        if(!e||!e.ok)continue;
+        const norm={mass:e.mass,dmm:Math.max(e.dmm,1e-6)};
+        let cur=p0,curE=P_evalP(F.family,F.process,p0,cfg,opts,norm,d.qty),best=cur,bestE=curE;
+        let sig=0.09;const T0=0.10*Math.abs(curE.obj)+1e-6;
+        for(let it=1;it<=d.itersPer;it++){
+          const T=T0*Math.pow(1e-3,it/d.itersPer);
+          const c2=P_mutP(cur,B,sig,rnd);
+          const e2=P_evalP(F.family,F.process,c2,cfg,opts,norm,d.qty);
+          if(!e2.ok)continue;
+          const dE=e2.obj-curE.obj;
+          if(dE<0||rnd()<Math.exp(-dE/Math.max(T,1e-12))){
+            cur=c2;curE=e2;
+            if(e2.obj<bestE.obj){best=c2;bestE=e2;}
+          }
+        }
+        rows.push([F.family,F.process,mat.key,mat.E,mat.sy,mat.rho,mat.cost,
+          L.toFixed(3),P.toFixed(3),a.toFixed(3),w.toFixed(3),wM.toFixed(2)]
+          .concat(GEO.map(k=>k in best?(+best[k]).toFixed(2):''))
+          .concat([bestE.mass.toFixed(3),bestE.cost.toFixed(2),bestE.dmm.toFixed(4),
+            bestE.FoSb.toFixed(3),bestE.FoSs.toFixed(3),bestE.sig.toFixed(3),bestE.tau.toFixed(3),
+            bestE.rub.score.toFixed(3),bestE.A.toFixed(1),bestE.Ix.toFixed(0)]));
+        i++;
+        self.postMessage({type:'pdsprog',done:i,n:d.n});
+      }
+      if(i<d.n)setTimeout(step,0);
+      else self.postMessage({type:'pdsdone',rows,header:
+        ['family','process','material','E_GPa','sy_MPa','rho_kgm3','cost_perkg',
+         'L_m','P_kN','a_m','w_kNm','obj_weight_mass']
+        .concat(GEO.map(k=>'geo_'+k+'_mm'))
+        .concat(['mass_kg','cost_usd','dmax_mm','FoS_bending','FoS_shear',
+                 'sigma_max_MPa','tau_max_MPa','mfg_score','A_mm2','Ix_mm4'])});
+    };
+    step();
+  }
+
+  function runDataset(d){
+    const rnd=P_mulberry(d.seed);
+    const props0=P_section(d.contours);
+    const anchor={x:props0.cx,y:props0.cy};
+    const diag=Math.hypot(props0.xmax-props0.xmin,props0.ymax-props0.ymin);
+    const rows=[];
+    let i=0;
+    const chunk=()=>{
+      const t0=Date.now();
+      while(i<d.n&&Date.now()-t0<28){
+        i++;
+        let c=P_copy(d.contours);
+        if(d.jitter){
+          for(let k=0;k<8;k++){
+            const cand=P_mutate(c,0.03*diag,rnd,anchor);
+            if(P_validGeom(cand,2,null))c=cand;
+          }
+        }
+        const sx=0.6+rnd(),sy=0.6+rnd();
+        P_scaleAll(c,anchor,sx,sy);
+        const props=P_section(c);
+        if(!props){i--;continue;}
+        const mat=d.mats[Math.floor(rnd()*d.mats.length)];
+        const L=2+rnd()*6;
+        const P=2+rnd()*28, a=L*(0.1+rnd()*0.8);
+        const w=rnd()<0.15?0:rnd()*12;
+        const cfg={L,loads:[{P,a}],udl:{on:w>0,w,x1:0,x2:L},self:false,mat};
+        const r=P_beam(cfg,props,121);
+        const I=props.Ix*1e-12;
+        const sig=Math.abs(r.M[r.iM])*(Math.max(props.ctop,props.cbot)*1e-3)/I/1e6;
+        const tau=P_tauMax(c,props,Math.abs(r.V[r.iV]),15,false).tauMax;
+        const mass=mat.rho*(props.A*1e-6)*L;
+        rows.push([mat.key,mat.E,mat.rho,mat.sy,mat.cost,
+          L.toFixed(3),P.toFixed(3),a.toFixed(3),w.toFixed(3),
+          sx.toFixed(4),sy.toFixed(4),
+          props.A.toFixed(1),props.Ix.toFixed(0),props.Iy.toFixed(0),
+          props.ctop.toFixed(2),props.cbot.toFixed(2),
+          mass.toFixed(3),(mass*mat.cost).toFixed(2),
+          (r.M[r.iM]/1e3).toFixed(4),(r.V[r.iV]/1e3).toFixed(4),
+          (Math.abs(r.def[r.iD])*1e3).toFixed(4),
+          sig.toFixed(3),tau.toFixed(3),
+          (sig>1e-9?mat.sy/sig:1e9).toFixed(3),
+          (tau>1e-9?0.577*mat.sy/tau:1e9).toFixed(3)]);
+      }
+      self.postMessage({type:'dsprog',done:i,n:d.n});
+      if(i<d.n)setTimeout(chunk,0);
+      else self.postMessage({type:'dsdone',rows,
+        header:['material','E_GPa','rho_kgm3','sy_MPa','cost_perkg',
+          'L_m','P_kN','a_m','w_kNm','scale_x','scale_y',
+          'A_mm2','Ix_mm4','Iy_mm4','ctop_mm','cbot_mm',
+          'mass_kg','cost_usd','Mmax_kNm','Vmax_kN','dmax_mm',
+          'sigma_max_MPa','tau_max_MPa','FoS_bending','FoS_shear']});
+    };
+    chunk();
+  }
+}
+
+/* ██████████████████ SECTION LAB ██████████████████ */
+const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
+const mcv=document.getElementById('mohr'),mctx=mcv.getContext('2d');
+
+const state={contours:[],active:null,mode:'draw',snap:true,grid:10,scale:2.6,ox:90,oy:70,drag:null,presetKey:null,sliceFrac:0.5,mouse:null};
+const W=()=>cv.width,H=()=>cv.height;
+const toSX=x=>state.ox+x*state.scale;
+const toSY=y=>H()-state.oy-y*state.scale;
+const toWX=sx=>(sx-state.ox)/state.scale;
+const toWY=sy=>(H()-state.oy-sy)/state.scale;
+
+const sectionProps=()=>P_section(state.contours);
+
+function fmt(v,unit,pow){
+  if(!isFinite(v))return '—';
+  const av=Math.abs(v);let e=0;
+  if(av>=1e5||(av>0&&av<1e-2))e=Math.floor(Math.log10(av)/3)*3;
+  const m=v/Math.pow(10,e);
+  const digits=Math.abs(m)>=100?1:(Math.abs(m)>=10?2:3);
+  let s=m.toFixed(digits);
+  if(e!==0)s+='×10'+supNum(e);
+  return s+`<span class="unit">${unit||''}${pow?supNum(pow):''}</span>`;
+}
+function supNum(n){
+  const map={'-':'⁻','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};
+  return String(n).split('').map(c=>map[c]||c).join('');
+}
+
+function draw(){
+  const w=W(),h=H();
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#FDFDFB';ctx.fillRect(0,0,w,h);
+  drawGrid();
+  const props=sectionProps();
+  const cs=state.contours.filter(c=>c.pts.length>=3);
+  if(cs.length){
+    ctx.beginPath();
+    for(const c of cs){
+      c.pts.forEach((p,i)=>i?ctx.lineTo(toSX(p.x),toSY(p.y)):ctx.moveTo(toSX(p.x),toSY(p.y)));
+      ctx.closePath();
+    }
+    ctx.fillStyle='rgba(22,35,45,0.09)';ctx.fill('evenodd');
+    ctx.strokeStyle='#16232D';ctx.lineWidth=1.6;ctx.stroke();
+  }
+  if(props)drawSlice(props);
+  for(const c of state.contours)drawVerts(c.pts,c.isHole);
+  if(state.active&&state.active.pts.length){
+    const p=state.active.pts;
+    ctx.beginPath();
+    p.forEach((q,i)=>i?ctx.lineTo(toSX(q.x),toSY(q.y)):ctx.moveTo(toSX(q.x),toSY(q.y)));
+    if(state.mouse)ctx.lineTo(toSX(state.mouse.x),toSY(state.mouse.y));
+    ctx.strokeStyle=state.active.isHole?'#0B7285':'#D9480F';
+    ctx.setLineDash([5,4]);ctx.lineWidth=1.4;ctx.stroke();ctx.setLineDash([]);
+    drawVerts(p,state.active.isHole,true);
+    const f=p[0];
+    ctx.beginPath();ctx.arc(toSX(f.x),toSY(f.y),9,0,7);
+    ctx.strokeStyle='rgba(217,72,15,.5)';ctx.lineWidth=1;ctx.stroke();
+  }
+  if(props){drawPrincipalAxes(props);drawCentroid(props);drawExtremeFibers(props);}
+  updateReadouts(props);
+}
+function drawGrid(){
+  const w=W(),h=H(),g=state.grid*state.scale;
+  if(g>=4){
+    ctx.lineWidth=1;ctx.strokeStyle='#E9EFF3';ctx.beginPath();
+    const sx0=((toSX(0)%g)+g)%g,sy0=((toSY(0)%g)+g)%g;
+    for(let x=sx0;x<w;x+=g){ctx.moveTo(x,0);ctx.lineTo(x,h);}
+    for(let y=sy0;y<h;y+=g){ctx.moveTo(0,y);ctx.lineTo(w,y);}
+    ctx.stroke();
+    const G=g*5;ctx.strokeStyle='#D5DFE7';ctx.beginPath();
+    const Sx0=((toSX(0)%G)+G)%G,Sy0=((toSY(0)%G)+G)%G;
+    for(let x=Sx0;x<w;x+=G){ctx.moveTo(x,0);ctx.lineTo(x,h);}
+    for(let y=Sy0;y<h;y+=G){ctx.moveTo(0,y);ctx.lineTo(w,y);}
+    ctx.stroke();
+  }
+  ctx.strokeStyle='#B9C7D2';ctx.lineWidth=1.2;ctx.beginPath();
+  ctx.moveTo(0,toSY(0));ctx.lineTo(w,toSY(0));
+  ctx.moveTo(toSX(0),0);ctx.lineTo(toSX(0),h);
+  ctx.stroke();
+  ctx.fillStyle='#9AA6B0';ctx.font='11px "IBM Plex Mono",monospace';
+  ctx.fillText('x (mm)',w-52,Math.min(Math.max(toSY(0)-6,12),h-6));
+  ctx.fillText('y',Math.min(Math.max(toSX(0)+6,6),w-14),14);
+}
+function drawVerts(pts,isHole,activeSketch){
+  const col=isHole?'#0B7285':(activeSketch?'#D9480F':'#16232D');
+  for(const p of pts){
+    const x=toSX(p.x),y=toSY(p.y);
+    ctx.fillStyle='#fff';ctx.strokeStyle=col;ctx.lineWidth=1.4;
+    ctx.beginPath();ctx.rect(x-3.5,y-3.5,7,7);ctx.fill();ctx.stroke();
+  }
+}
+function drawCentroid(pr){
+  const x=toSX(pr.cx),y=toSY(pr.cy);
+  ctx.strokeStyle='#D9480F';ctx.lineWidth=1.6;
+  ctx.beginPath();ctx.arc(x,y,7,0,7);ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x-12,y);ctx.lineTo(x+12,y);ctx.moveTo(x,y-12);ctx.lineTo(x,y+12);
+  ctx.stroke();
+  ctx.fillStyle='#D9480F';ctx.font='600 11px "IBM Plex Mono",monospace';
+  ctx.fillText('C',x+10,y-10);
+}
+function drawPrincipalAxes(pr){
+  const L=Math.max(W(),H());
+  const x=toSX(pr.cx),y=toSY(pr.cy);
+  ctx.save();ctx.translate(x,y);ctx.rotate(-pr.th);
+  ctx.strokeStyle='rgba(11,114,133,.85)';ctx.setLineDash([7,5]);ctx.lineWidth=1.3;
+  ctx.beginPath();
+  ctx.moveTo(-L,0);ctx.lineTo(L,0);ctx.moveTo(0,-L);ctx.lineTo(0,L);
+  ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='#0B7285';ctx.font='600 11px "IBM Plex Mono",monospace';
+  ctx.fillText('1',L*0.28,-5);ctx.fillText('2',5,-L*0.28);
+  ctx.restore();
+}
+function drawExtremeFibers(pr){
+  ctx.strokeStyle='rgba(217,72,15,.45)';ctx.setLineDash([2,4]);ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(toSX(pr.xmin)-16,toSY(pr.ymax));ctx.lineTo(toSX(pr.xmax)+16,toSY(pr.ymax));
+  ctx.moveTo(toSX(pr.xmin)-16,toSY(pr.ymin));ctx.lineTo(toSX(pr.xmax)+16,toSY(pr.ymin));
+  ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='rgba(217,72,15,.8)';ctx.font='10.5px "IBM Plex Mono",monospace';
+  ctx.fillText('c_top='+pr.ctop.toFixed(1),toSX(pr.xmax)+20,toSY(pr.ymax)+4);
+  ctx.fillText('c_bot='+pr.cbot.toFixed(1),toSX(pr.xmax)+20,toSY(pr.ymin)+4);
+}
+function drawSlice(pr){
+  const yAbs=pr.ymin+state.sliceFrac*(pr.ymax-pr.ymin);
+  const cs=state.contours.filter(c=>c.pts.length>=3);
+  ctx.beginPath();let any=false;
+  for(const c of cs){
+    const cl=P_clipAbove(c.pts,yAbs);
+    if(cl.length>=3){any=true;
+      cl.forEach((p,i)=>i?ctx.lineTo(toSX(p.x),toSY(p.y)):ctx.moveTo(toSX(p.x),toSY(p.y)));
+      ctx.closePath();
+    }
+  }
+  if(any){ctx.fillStyle='rgba(11,114,133,0.10)';ctx.fill('evenodd');}
+  const y=toSY(yAbs);
+  ctx.strokeStyle='#0B7285';ctx.lineWidth=1.4;
+  ctx.beginPath();ctx.moveTo(toSX(pr.xmin)-26,y);ctx.lineTo(toSX(pr.xmax)+26,y);ctx.stroke();
+  ctx.fillStyle='#0B7285';ctx.font='600 10.5px "IBM Plex Mono",monospace';
+  ctx.fillText('y',toSX(pr.xmin)-38,y+4);
+}
+function updateReadouts(pr){
+  const g=id=>document.getElementById(id);
+  const set=(id,html)=>{g(id).innerHTML=html;};
+  if(!pr){
+    ['pA','pCx','pCy','pIx','pIy','pIxy','pC','pStop','pSbot','pR','pEff','pI1','pI2','pTh','sY','sQ','sT']
+      .forEach(id=>set(id,'—'));
+    drawMohr(null);updateVerify(null);beamRecalc(null);
+    return;
+  }
+  set('pA',fmt(pr.A,'mm',2));set('pCx',fmt(pr.cx,'mm'));set('pCy',fmt(pr.cy,'mm'));
+  set('pIx',fmt(pr.Ix,'mm',4));set('pIy',fmt(pr.Iy,'mm',4));set('pIxy',fmt(pr.Ixy,'mm',4));
+  set('pC',pr.ctop.toFixed(1)+' / '+pr.cbot.toFixed(1)+'<span class="unit">mm</span>');
+  set('pStop',fmt(pr.Stop,'mm',3));set('pSbot',fmt(pr.Sbot,'mm',3));
+  set('pR',pr.rx.toFixed(1)+' , '+pr.ry.toFixed(1)+'<span class="unit">mm</span>');
+  set('pEff',fmt(Math.min(pr.Stop,pr.Sbot)/pr.A,'mm'));
+  set('pI1',fmt(pr.I1,'mm',4));set('pI2',fmt(pr.I2,'mm',4));
+  set('pTh',(pr.th*180/Math.PI).toFixed(2)+'°');
+  const yAbs=pr.ymin+state.sliceFrac*(pr.ymax-pr.ymin);
+  const s=P_slice(state.contours,pr,yAbs);
+  set('sY',yAbs.toFixed(1));set('sQ',fmt(s.Q,'mm',3));set('sT',s.t.toFixed(1)+'<span class="unit">mm</span>');
+  drawMohr(pr);updateVerify(pr);
+  let warn='';
+  for(const c of state.contours)
+    if(c.pts.length>=3&&P_selfX(c.pts)){warn='⚠ self-intersecting boundary — properties unreliable';break;}
+  document.getElementById('stWarn').textContent=warn;
+  const nv=state.contours.reduce((s2,c)=>s2+c.pts.length,0);
+  document.getElementById('stCount').textContent=nv?nv+' vertices':'';
+  beamRecalc(pr);
+}
+function drawMohr(pr){
+  const w=mcv.width,h=mcv.height;
+  mctx.clearRect(0,0,w,h);
+  mctx.fillStyle='#FDFDFB';mctx.fillRect(0,0,w,h);
+  if(!pr)return;
+  const c0=(pr.Ix+pr.Iy)/2,R=Math.max(Math.hypot((pr.Ix-pr.Iy)/2,pr.Ixy),Math.abs(c0)*1e-6,1e-9);
+  const pad=54;
+  const sc=Math.min((w-2*pad)/(2*R),(h-2*pad)/(2*R));
+  const px=I=>w/2+(I-c0)*sc,py=v=>h/2-v*sc;
+  mctx.strokeStyle='#D5DFE7';mctx.lineWidth=1;
+  mctx.beginPath();mctx.moveTo(14,h/2);mctx.lineTo(w-14,h/2);mctx.stroke();
+  mctx.fillStyle='#9AA6B0';mctx.font='10px "IBM Plex Mono",monospace';
+  mctx.fillText('I',w-24,h/2-6);mctx.fillText('Ixy',w/2+8,16);
+  mctx.strokeStyle='#0B7285';mctx.lineWidth=1.6;
+  mctx.beginPath();mctx.arc(px(c0),py(0),R*sc,0,7);mctx.stroke();
+  mctx.strokeStyle='rgba(11,114,133,.5)';
+  mctx.beginPath();mctx.moveTo(px(pr.Ix),py(pr.Ixy));mctx.lineTo(px(pr.Iy),py(-pr.Ixy));mctx.stroke();
+  const dot=(x,y,c,lab,dx,dy)=>{
+    mctx.fillStyle=c;mctx.beginPath();mctx.arc(x,y,4,0,7);mctx.fill();
+    mctx.font='600 10.5px "IBM Plex Mono",monospace';mctx.fillText(lab,x+dx,y+dy);
+  };
+  dot(px(pr.Ix),py(pr.Ixy),'#16232D','X(Ix, Ixy)',8,-6);
+  dot(px(pr.Iy),py(-pr.Ixy),'#16232D','Y(Iy, −Ixy)',8,14);
+  dot(px(pr.I1),py(0),'#D9480F','I₁',6,-8);
+  dot(px(pr.I2),py(0),'#D9480F','I₂',-24,-8);
+}
+
+const PRESETS={
+  rect:{label:'Rectangle 120 × 180',
+    build(){return [rectC(0,0,120,180)];},
+    theory(){const b=120,h=180;return {A:b*h,Ix:b*h**3/12,Iy:h*b**3/12};}},
+  ibeam:{label:'I-beam d220 bf120 tf16 tw10',
+    build(){
+      const d=220,bf=120,tf=16,tw=10,xm=bf/2;
+      return [{isHole:false,pts:[
+        {x:0,y:0},{x:bf,y:0},{x:bf,y:tf},{x:xm+tw/2,y:tf},
+        {x:xm+tw/2,y:d-tf},{x:bf,y:d-tf},{x:bf,y:d},{x:0,y:d},
+        {x:0,y:d-tf},{x:xm-tw/2,y:d-tf},{x:xm-tw/2,y:tf},{x:0,y:tf}]}];
+    },
+    theory(){
+      const d=220,bf=120,tf=16,tw=10;
+      return {A:2*bf*tf+(d-2*tf)*tw,
+              Ix:(bf*d**3-(bf-tw)*(d-2*tf)**3)/12,
+              Iy:(2*tf*bf**3+(d-2*tf)*tw**3)/12};
+    }},
+  tsec:{label:'T-section bf140 tf16 d160 tw12',
+    build(){
+      const bf=140,tf=16,d=160,tw=12,xm=bf/2;
+      return [{isHole:false,pts:[
+        {x:xm-tw/2,y:0},{x:xm+tw/2,y:0},{x:xm+tw/2,y:d-tf},
+        {x:bf,y:d-tf},{x:bf,y:d},{x:0,y:d},{x:0,y:d-tf},{x:xm-tw/2,y:d-tf}]}];
+    },
+    theory(){
+      const bf=140,tf=16,d=160,tw=12;
+      const A1=bf*tf,y1=d-tf/2,A2=tw*(d-tf),y2=(d-tf)/2;
+      const A=A1+A2,yb=(A1*y1+A2*y2)/A;
+      return {A,
+        Ix:bf*tf**3/12+A1*(y1-yb)**2+tw*(d-tf)**3/12+A2*(y2-yb)**2,
+        Iy:tf*bf**3/12+(d-tf)*tw**3/12};
+    }},
+  box:{label:'Hollow box 150 × 220, t = 10',
+    build(){return [rectC(0,0,150,220),rectC(10,10,130,200,true)];},
+    theory(){const B=150,D=220,b=130,d=200;
+      return {A:B*D-b*d,Ix:(B*D**3-b*d**3)/12,Iy:(D*B**3-d*b**3)/12};}},
+  channel:{label:'Channel d180 bf70 tf12 tw10',
+    build(){
+      const d=180,bf=70,tf=12,tw=10;
+      return [{isHole:false,pts:[
+        {x:0,y:0},{x:bf,y:0},{x:bf,y:tf},{x:tw,y:tf},
+        {x:tw,y:d-tf},{x:bf,y:d-tf},{x:bf,y:d},{x:0,y:d}]}];
+    },
+    theory(){
+      const d=180,bf=70,tf=12,tw=10;
+      return {A:2*bf*tf+(d-2*tf)*tw,
+              Ix:(bf*d**3-(bf-tw)*(d-2*tf)**3)/12,Iy:null};
+    }},
+  circle:{label:'Circle r = 70 (60-gon)',
+    build(){
+      const r=70,cx=90,cy=90,n=60,pts=[];
+      for(let i=0;i<n;i++){const a=2*Math.PI*i/n;pts.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)});}
+      return [{isHole:false,pts}];
+    },
+    theory(){const r=70;return {A:Math.PI*r*r,Ix:Math.PI*r**4/4,Iy:Math.PI*r**4/4};}}
+};
+function rectC(x,y,w,h,isHole=false){
+  return {isHole,pts:[{x,y},{x:x+w,y},{x:x+w,y:y+h},{x,y:y+h}]};
+}
+function updateVerify(pr){
+  const box=document.getElementById('verifyBody');
+  if(!pr||!state.presetKey){
+    box.innerHTML='<p class="verify-msg">'+
+      (pr?'Custom section — no closed-form twin. The math above <em>is</em> the general answer.'
+         :'Load a preset to compare computed values against closed-form formulas.')+'</p>';
+    return;
+  }
+  const P=PRESETS[state.presetKey],th=P.theory();
+  const row=(name,c,t)=>{
+    if(t==null)return '';
+    const err=Math.abs(c-t)/Math.abs(t)*100;
+    return `<tr><td>${name}</td><td>${fmt(c,'')}</td><td>${fmt(t,'')}</td>`+
+           `<td class="${err<0.5?'ok':''}">${err<0.005?'0.00':err.toFixed(2)}%</td></tr>`;
+  };
+  box.innerHTML=
+    `<p class="verify-msg" style="margin-bottom:6px">${P.label}</p>`+
+    `<table class="verify"><tr><th>Qty</th><th>Computed</th><th>Textbook</th><th>Δ</th></tr>`+
+    row('A (mm²)',pr.A,th.A)+row('Ix (mm⁴)',pr.Ix,th.Ix)+row('Iy (mm⁴)',pr.Iy,th.Iy)+
+    `</table>`+
+    (state.presetKey==='circle'
+      ?'<p class="verify-msg" style="margin-top:6px">The small Δ is polygon discretization — a 60-gon slightly under-fills the true circle.</p>':'');
+}
+
+/* ---------- section interactions ---------- */
+function snapPt(p){
+  if(!state.snap)return p;
+  const g=state.grid;
+  return {x:Math.round(p.x/g)*g,y:Math.round(p.y/g)*g};
+}
+function canvasPos(ev,el){
+  const r=el.getBoundingClientRect();
+  return {sx:(ev.clientX-r.left)*(el.width/r.width),
+          sy:(ev.clientY-r.top)*(el.height/r.height)};
+}
+function worldPos(ev){
+  const {sx,sy}=canvasPos(ev,cv);
+  return {x:toWX(sx),y:toWY(sy)};
+}
+function setMode(m){
+  state.mode=m;commitActive(false);
+  for(const [id,mm] of [['btnDraw','draw'],['btnHole','hole'],['btnEdit','edit']])
+    document.getElementById(id).classList.toggle('on',mm===m);
+  cv.classList.toggle('editmode',m==='edit');
+  document.getElementById('stHint').textContent=
+    m==='edit'?'Drag vertices to reshape · double-click a vertex to delete it'
+              :'Click to place vertices · Enter or “Close shape” to finish';
+  draw();
+}
+function commitActive(keep){
+  if(state.active&&state.active.pts.length>=3&&keep){
+    state.contours.push(state.active);state.presetKey=null;
+  }
+  state.active=null;
+}
+function markCustom(){state.presetKey=null;}
+
+cv.addEventListener('pointerdown',ev=>{
+  const wp=worldPos(ev);
+  if(state.mode==='edit'){
+    const tol=9/state.scale;let best=null,bd=tol;
+    state.contours.forEach((c,ci)=>c.pts.forEach((p,vi)=>{
+      const d=Math.hypot(p.x-wp.x,p.y-wp.y);
+      if(d<bd){bd=d;best={ci,vi};}
+    }));
+    state.drag=best;
+    if(best)cv.setPointerCapture(ev.pointerId);
+    return;
+  }
+  const p=snapPt(wp);
+  if(!state.active)state.active={pts:[],isHole:state.mode==='hole'};
+  const f=state.active.pts[0];
+  if(f&&state.active.pts.length>=3&&
+     Math.hypot(toSX(f.x)-toSX(p.x),toSY(f.y)-toSY(p.y))<10){
+    commitActive(true);draw();return;
+  }
+  state.active.pts.push(p);draw();
+});
+cv.addEventListener('pointermove',ev=>{
+  const wp=worldPos(ev);
+  state.mouse=snapPt(wp);
+  document.getElementById('stCoord').textContent=
+    'x '+state.mouse.x.toFixed(state.snap?0:1)+' , y '+state.mouse.y.toFixed(state.snap?0:1)+' mm';
+  if(state.mode==='edit'&&state.drag){
+    const p=snapPt(wp);
+    state.contours[state.drag.ci].pts[state.drag.vi]={x:p.x,y:p.y};
+    markCustom();
+  }
+  draw();
+});
+cv.addEventListener('pointerup',()=>{state.drag=null;});
+cv.addEventListener('dblclick',ev=>{
+  if(state.mode!=='edit')return;
+  const wp=worldPos(ev),tol=9/state.scale;
+  for(let ci=0;ci<state.contours.length;ci++){
+    const c=state.contours[ci];
+    for(let vi=0;vi<c.pts.length;vi++){
+      if(Math.hypot(c.pts[vi].x-wp.x,c.pts[vi].y-wp.y)<tol){
+        c.pts.splice(vi,1);
+        if(c.pts.length<3)state.contours.splice(ci,1);
+        markCustom();draw();return;
+      }
+    }
+  }
+});
+document.addEventListener('keydown',ev=>{
+  if(ev.target.tagName==='INPUT'||ev.target.tagName==='SELECT')return;
+  if(ev.key==='Enter'){commitActive(true);draw();}
+  if(ev.key==='Escape'){state.active=null;draw();}
+});
+document.getElementById('btnDraw').onclick=()=>setMode('draw');
+document.getElementById('btnHole').onclick=()=>setMode('hole');
+document.getElementById('btnEdit').onclick=()=>setMode('edit');
+document.getElementById('btnClose').onclick=()=>{commitActive(true);draw();};
+document.getElementById('btnUndo').onclick=()=>{
+  if(state.active&&state.active.pts.length){state.active.pts.pop();if(!state.active.pts.length)state.active=null;}
+  else if(state.contours.length){state.contours.pop();markCustom();}
+  draw();
+};
+document.getElementById('btnClear').onclick=()=>{
+  state.contours=[];state.active=null;state.presetKey=null;draw();
+};
+document.getElementById('chkSnap').onchange=e=>{state.snap=e.target.checked;};
+document.getElementById('inGrid').onchange=e=>{state.grid=Math.max(1,+e.target.value||10);draw();};
+document.getElementById('btnZoomIn').onclick=()=>zoomAt(1.25);
+document.getElementById('btnZoomOut').onclick=()=>zoomAt(0.8);
+function zoomAt(f){
+  const cxw=toWX(W()/2),cyw=toWY(H()/2);
+  state.scale*=f;
+  state.ox=W()/2-cxw*state.scale;
+  state.oy=H()/2-cyw*state.scale;
+  draw();
+}
+document.getElementById('btnFit').onclick=fitView;
+function fitView(){
+  const pr=sectionProps();if(!pr){draw();return;}
+  const mw=pr.xmax-pr.xmin,mh=pr.ymax-pr.ymin,pad=90;
+  state.scale=Math.min((W()-2*pad)/Math.max(mw,1),(H()-2*pad)/Math.max(mh,1));
+  state.scale=Math.min(Math.max(state.scale,0.2),20);
+  state.ox=(W()-mw*state.scale)/2-pr.xmin*state.scale;
+  state.oy=(H()-mh*state.scale)/2-pr.ymin*state.scale;
+  draw();
+}
+document.getElementById('sliceY').addEventListener('input',e=>{
+  state.sliceFrac=+e.target.value/100;draw();
+});
+document.querySelectorAll('[data-preset]').forEach(b=>{
+  b.onclick=()=>{
+    state.contours=PRESETS[b.dataset.preset].build().map(c=>({isHole:!!c.isHole,pts:c.pts.map(p=>({...p}))}));
+    state.active=null;state.presetKey=b.dataset.preset;
+    fitView();
+  };
+});
+
+/* ██████████████████ BEAM LAB ██████████████████ */
+const bcv=document.getElementById('bstage'),bctx=bcv.getContext('2d');
+const scv=document.getElementById('sstage'),sctx=scv.getContext('2d');
+
+const MATS={
+  steel:{key:'steel',name:'Structural steel',E:200,rho:7850,sy:250,cost:0.9},
+  alu:  {key:'alu',  name:'Aluminum 6061-T6',E:69, rho:2700,sy:276,cost:2.6},
+  ti:   {key:'ti',   name:'Titanium Ti-6Al-4V',E:114,rho:4430,sy:880,cost:23},
+  wood: {key:'wood', name:'Douglas fir',E:13, rho:530, sy:40, cost:1.2},
+};
+const beam={L:4,mat:'steel',self:false,
+  loads:[{P:10,a:2}],
+  udl:{on:true,w:5,x1:0,x2:4}};
+let bres=null;
+
+function mkCfg(){
+  return {L:beam.L,
+    loads:beam.loads.map(l=>({P:l.P,a:l.a})),
+    udl:{on:beam.udl.on,w:beam.udl.w,x1:beam.udl.x1,x2:beam.udl.x2},
+    self:beam.self, mat:MATS[beam.mat]};
+}
+
+function beamRecalc(props){
+  document.getElementById('bSelfVal').textContent=
+    (props?'(w = '+(MATS[beam.mat].rho*props.A*1e-6*9.81/1e3).toFixed(3)+' kN/m)':'');
+  if(!props){
+    bres=null;
+    bctx.clearRect(0,0,bcv.width,bcv.height);
+    bctx.fillStyle='#FDFDFB';bctx.fillRect(0,0,bcv.width,bcv.height);
+    bctx.fillStyle='#8896A2';bctx.font='13px Archivo,sans-serif';
+    bctx.fillText('Draw a cross-section in the Section Lab first — the beam needs its I.',40,60);
+    sctx.clearRect(0,0,scv.width,scv.height);
+    ['rR','rM','rV','rD','rLd','rSt','rSb','rTau','rFb','rFs','rMass','rCost']
+      .forEach(id=>document.getElementById(id).innerHTML='—');
+    return;
+  }
+  const cfg=mkCfg();
+  const r=P_beam(cfg,props,601);
+  bres={r,props};
+  const I=props.Ix*1e-12;
+  const Mc=r.M[r.iM];
+  const sTop=-Mc*(props.ctop*1e-3)/I/1e6;
+  const sBot= Mc*(props.cbot*1e-3)/I/1e6;
+  const tp=P_tauMax(state.contours,props,Math.abs(r.V[r.iV]),81,true);
+  const m=cfg.mat;
+  const sMax=Math.max(Math.abs(sTop),Math.abs(sBot));
+  const FoSb=sMax>1e-9?m.sy/sMax:Infinity;
+  const FoSs=tp.tauMax>1e-9?0.577*m.sy/tp.tauMax:Infinity;
+  const mass=m.rho*(props.A*1e-6)*r.L;
+  const set=(id,html)=>document.getElementById(id).innerHTML=html;
+  set('rR',(r.R1/1e3).toFixed(2)+' , '+(r.R2/1e3).toFixed(2)+'<span class="unit">kN</span>');
+  set('rM',(r.M[r.iM]/1e3).toFixed(2)+'<span class="unit">kN·m</span> @ '+r.xs[r.iM].toFixed(2)+'<span class="unit">m</span>');
+  set('rV',(r.V[r.iV]/1e3).toFixed(2)+'<span class="unit">kN</span> @ '+r.xs[r.iV].toFixed(2)+'<span class="unit">m</span>');
+  const dmm=r.def[r.iD]*1e3;
+  set('rD',dmm.toFixed(3)+'<span class="unit">mm</span> @ '+r.xs[r.iD].toFixed(2)+'<span class="unit">m</span>');
+  set('rLd',Math.abs(dmm)>1e-9?'L / '+Math.round(r.L*1e3/Math.abs(dmm)):'—');
+  set('rSt',sTop.toFixed(1)+'<span class="unit">MPa</span>'+(sTop<0?' (comp)':' (tens)'));
+  set('rSb',sBot.toFixed(1)+'<span class="unit">MPa</span>'+(sBot<0?' (comp)':' (tens)'));
+  set('rTau',tp.tauMax.toFixed(2)+'<span class="unit">MPa</span>');
+  const fb=document.getElementById('rFb'),fs=document.getElementById('rFs');
+  fb.innerHTML=isFinite(FoSb)?FoSb.toFixed(2):'∞';
+  fb.className='v '+(FoSb<1?'bad':(FoSb<1.5?'':'good'));
+  fs.innerHTML=isFinite(FoSs)?FoSs.toFixed(2):'∞';
+  fs.className='v '+(FoSs<1?'bad':(FoSs<1.5?'':'good'));
+  set('rMass',mass.toFixed(1)+'<span class="unit">kg</span>');
+  set('rCost','$'+(mass*m.cost).toFixed(2));
+  const asym=Math.abs(props.Ixy)/Math.sqrt(Math.max(props.Ix*props.Iy,1e-12));
+  const wEl=document.getElementById('rWarn');
+  if(asym>0.05){
+    wEl.style.display='block';
+    wEl.textContent='⚠ Section is unsymmetric (Ixy ≠ 0): plane-bending results are approximate, and the shear-center offset means a vertical load would also twist this beam.';
+  } else wEl.style.display='none';
+  drawBeamDiagrams(r);
+  drawStress(r,props,{sTop,sBot,tau:tp.tau,ys:tp.ys,tauMax:tp.tauMax,yTauMax:tp.yTauMax});
+  beamVerify(r,props,{dmm});
+}
+
+const BAND={sch:{y0:16,y1:168},V:{y0:196,y1:334},M:{y0:362,y1:500},D:{y0:528,y1:648}};
+const BX0=70,BX1=790;
+const bpx=x=>BX0+(x/beam.L)*(BX1-BX0);
+
+function drawBeamDiagrams(r,hoverX){
+  const w=bcv.width,h=bcv.height;
+  bctx.clearRect(0,0,w,h);
+  bctx.fillStyle='#FDFDFB';bctx.fillRect(0,0,w,h);
+  const beamY=(BAND.sch.y0+BAND.sch.y1)/2+18;
+  for(const u of r.udls){
+    const x1=bpx(u.x1),x2=bpx(u.x2);
+    bctx.fillStyle='rgba(11,114,133,0.13)';
+    bctx.fillRect(x1,beamY-30,x2-x1,26);
+    bctx.strokeStyle='#0B7285';bctx.lineWidth=1;
+    bctx.strokeRect(x1,beamY-30,x2-x1,26);
+    const na=Math.max(3,Math.floor((x2-x1)/34));
+    for(let i=0;i<=na;i++){
+      const x=x1+(x2-x1)*i/na;
+      arrow(bctx,x,beamY-12,x,beamY-2,'#0B7285',1.2,4);
+    }
+    bctx.fillStyle='#0B7285';bctx.font='600 11px "IBM Plex Mono",monospace';
+    bctx.fillText((u.w/1e3).toFixed(2)+' kN/m',x1+4,beamY-35);
+  }
+  bctx.strokeStyle='#16232D';bctx.lineWidth=4;
+  bctx.beginPath();bctx.moveTo(bpx(0),beamY);bctx.lineTo(bpx(beam.L),beamY);bctx.stroke();
+  support(bctx,bpx(0),beamY,false);
+  support(bctx,bpx(beam.L),beamY,true);
+  arrow(bctx,bpx(0),beamY+46,bpx(0),beamY+16,'#2B8A3E',1.8,6);
+  arrow(bctx,bpx(beam.L),beamY+46,bpx(beam.L),beamY+16,'#2B8A3E',1.8,6);
+  bctx.fillStyle='#2B8A3E';bctx.font='600 11px "IBM Plex Mono",monospace';
+  bctx.fillText('R₁='+(r.R1/1e3).toFixed(2),bpx(0)-24,beamY+60);
+  bctx.fillText('R₂='+(r.R2/1e3).toFixed(2),bpx(beam.L)-46,beamY+60);
+  bctx.font='600 11px "IBM Plex Mono",monospace';
+  r.P.forEach((p,i)=>{
+    const x=bpx(p.a);
+    arrow(bctx,x,beamY-52,x,beamY-4,'#D9480F',2.2,7);
+    bctx.fillStyle='#D9480F';
+    bctx.fillText('P'+(i+1)+'='+(p.P/1e3).toFixed(1)+' kN',x-28,beamY-58);
+  });
+  bctx.fillStyle='#8896A2';bctx.font='11px "IBM Plex Mono",monospace';
+  bctx.fillText('L = '+beam.L+' m',(BX0+BX1)/2-26,BAND.sch.y1-2);
+  band(bctx,BAND.V,r.xs,r.V,1e-3,'V (kN)','#0B7285',r.iV);
+  band(bctx,BAND.M,r.xs,r.M,1e-3,'M (kN·m)','#D9480F',r.iM);
+  band(bctx,BAND.D,r.xs,r.def,1e3,'v (mm)','#16232D',r.iD);
+  const xc=bpx(r.xs[r.iM]);
+  bctx.strokeStyle='rgba(217,72,15,.35)';bctx.setLineDash([3,4]);
+  bctx.beginPath();bctx.moveTo(xc,BAND.sch.y1);bctx.lineTo(xc,BAND.D.y1);bctx.stroke();
+  bctx.setLineDash([]);
+  if(hoverX!=null){
+    const xp=bpx(hoverX);
+    bctx.strokeStyle='rgba(22,35,45,.4)';
+    bctx.beginPath();bctx.moveTo(xp,BAND.sch.y0);bctx.lineTo(xp,BAND.D.y1);bctx.stroke();
+    const i=Math.round(hoverX/beam.L*(r.xs.length-1));
+    bctx.fillStyle='#16232D';bctx.font='600 11px "IBM Plex Mono",monospace';
+    const lab=`x=${hoverX.toFixed(2)} m   V=${(r.V[i]/1e3).toFixed(2)} kN   M=${(r.M[i]/1e3).toFixed(2)} kN·m   v=${(r.def[i]*1e3).toFixed(3)} mm`;
+    bctx.fillText(lab,BX0,BAND.V.y0-8);
+  }
+}
+function support(c,x,y,roller){
+  c.fillStyle='#FDFDFB';c.strokeStyle='#16232D';c.lineWidth=1.6;
+  c.beginPath();c.moveTo(x,y);c.lineTo(x-13,y+22);c.lineTo(x+13,y+22);c.closePath();
+  c.fill();c.stroke();
+  if(roller){
+    c.beginPath();c.arc(x-6,y+28,4,0,7);c.arc(x+6,y+28,4,0,7);c.stroke();
+    hatch(c,x-16,y+33,32);
+  } else hatch(c,x-16,y+23,32);
+}
+function hatch(c,x,y,w){
+  c.strokeStyle='#8896A2';c.lineWidth=1;
+  c.beginPath();
+  for(let i=0;i<=w;i+=6){c.moveTo(x+i,y);c.lineTo(x+i-5,y+7);}
+  c.stroke();
+}
+function arrow(c,x1,y1,x2,y2,col,lw,hd){
+  c.strokeStyle=col;c.fillStyle=col;c.lineWidth=lw;
+  c.beginPath();c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke();
+  const a=Math.atan2(y2-y1,x2-x1);
+  c.beginPath();c.moveTo(x2,y2);
+  c.lineTo(x2-hd*Math.cos(a-0.4),y2-hd*Math.sin(a-0.4));
+  c.lineTo(x2-hd*Math.cos(a+0.4),y2-hd*Math.sin(a+0.4));
+  c.closePath();c.fill();
+}
+function band(c,B,xs,ys,scaleLab,label,col,iMax){
+  const mid=(B.y0+B.y1)/2;
+  let vmax=0;for(const v of ys)vmax=Math.max(vmax,Math.abs(v));
+  const sc=vmax>1e-12?(B.y1-B.y0)/2*0.82/vmax:0;
+  c.strokeStyle='#D5DFE7';c.lineWidth=1;
+  c.beginPath();c.moveTo(BX0,mid);c.lineTo(BX1,mid);c.stroke();
+  c.beginPath();c.moveTo(bpx(xs[0]),mid);
+  for(let i=0;i<xs.length;i++)c.lineTo(bpx(xs[i]),mid-ys[i]*sc);
+  c.lineTo(bpx(xs[xs.length-1]),mid);c.closePath();
+  c.globalAlpha=0.14;c.fillStyle=col;c.fill();c.globalAlpha=1;
+  c.strokeStyle=col;c.lineWidth=1.8;
+  c.beginPath();
+  for(let i=0;i<xs.length;i++){
+    const px=bpx(xs[i]),py=mid-ys[i]*sc;
+    i?c.lineTo(px,py):c.moveTo(px,py);
+  }
+  c.stroke();
+  c.fillStyle=col;c.font='700 11px "IBM Plex Mono",monospace';
+  c.fillText(label,BX0-56,B.y0+12);
+  const pv=ys[iMax]*scaleLab;
+  c.font='600 10.5px "IBM Plex Mono",monospace';
+  const px=bpx(xs[iMax]),py=mid-ys[iMax]*sc;
+  c.beginPath();c.arc(px,py,3.4,0,7);c.fill();
+  c.fillText(pv.toFixed(2),Math.min(px+6,BX1-46),py+(ys[iMax]>=0?-6:14));
+}
+function drawStress(r,props,st){
+  const w=scv.width,h=scv.height;
+  sctx.clearRect(0,0,w,h);
+  sctx.fillStyle='#FDFDFB';sctx.fillRect(0,0,w,h);
+  const pad=34,secW=w*0.52;
+  const mw=props.xmax-props.xmin,mh=props.ymax-props.ymin;
+  const sc=Math.min((secW-2*pad)/Math.max(mw,1),(h-2*pad-26)/Math.max(mh,1));
+  const ox=pad+(secW-2*pad-mw*sc)/2-props.xmin*sc;
+  const px=x=>ox+x*sc;
+  const py=y=>h-24-(y-props.ymin)*sc-(h-48-mh*sc)/2;
+  const sRef=Math.max(Math.abs(st.sTop),Math.abs(st.sBot),1e-9);
+  const colFor=s=>{
+    const a=Math.min(Math.abs(s)/sRef,1)*0.85;
+    return s>=0?`rgba(201,42,42,${a})`:`rgba(59,91,219,${a})`;
+  };
+  const gTop=py(props.ymax),gBot=py(props.ymin);
+  const grad=sctx.createLinearGradient(0,gTop,0,gBot);
+  const naFrac=Math.min(Math.max((props.ymax-props.cy)/Math.max(mh,1e-9),0.001),0.999);
+  grad.addColorStop(0,colFor(st.sTop));
+  grad.addColorStop(naFrac,'rgba(255,255,255,0.9)');
+  grad.addColorStop(1,colFor(st.sBot));
+  const cs=state.contours.filter(c=>c.pts.length>=3);
+  sctx.beginPath();
+  for(const c of cs){
+    c.pts.forEach((p,i)=>i?sctx.lineTo(px(p.x),py(p.y)):sctx.moveTo(px(p.x),py(p.y)));
+    sctx.closePath();
+  }
+  sctx.fillStyle='#EDF1EE';sctx.fill('evenodd');
+  sctx.fillStyle=grad;sctx.fill('evenodd');
+  sctx.strokeStyle='#16232D';sctx.lineWidth=1.4;sctx.stroke();
+  const yNA=py(props.cy);
+  sctx.strokeStyle='#16232D';sctx.setLineDash([5,4]);sctx.lineWidth=1;
+  sctx.beginPath();sctx.moveTo(px(props.xmin)-14,yNA);sctx.lineTo(px(props.xmax)+14,yNA);sctx.stroke();
+  sctx.setLineDash([]);
+  sctx.font='600 10.5px "IBM Plex Mono",monospace';
+  sctx.fillStyle='#16232D';sctx.fillText('N.A.',px(props.xmax)+18,yNA+4);
+  sctx.fillStyle=st.sTop>=0?'#C92A2A':'#3B5BDB';
+  sctx.fillText('σ='+st.sTop.toFixed(1)+' MPa',px(props.xmin),gTop-8);
+  sctx.fillStyle=st.sBot>=0?'#C92A2A':'#3B5BDB';
+  sctx.fillText('σ='+st.sBot.toFixed(1)+' MPa',px(props.xmin),gBot+16);
+  sctx.fillStyle='#5C6B78';sctx.font='11px Archivo,sans-serif';
+  sctx.fillText('Bending @ x = '+r.xs[r.iM].toFixed(2)+' m',pad-14,16);
+  const tx0=secW+30,tx1=w-24;
+  const tScale=st.tauMax>1e-9?(tx1-tx0-40)/st.tauMax:0;
+  sctx.strokeStyle='#D5DFE7';sctx.lineWidth=1;
+  sctx.beginPath();sctx.moveTo(tx0,gTop);sctx.lineTo(tx0,gBot);sctx.stroke();
+  sctx.strokeStyle='#0B7285';sctx.lineWidth=1.8;
+  sctx.beginPath();
+  for(let i=0;i<st.ys.length;i++){
+    const X=tx0+st.tau[i]*tScale,Y=py(st.ys[i]);
+    i?sctx.lineTo(X,Y):sctx.moveTo(X,Y);
+  }
+  sctx.stroke();
+  sctx.fillStyle='rgba(11,114,133,0.10)';
+  sctx.beginPath();sctx.moveTo(tx0,py(st.ys[0]));
+  for(let i=0;i<st.ys.length;i++)sctx.lineTo(tx0+st.tau[i]*tScale,py(st.ys[i]));
+  sctx.lineTo(tx0,py(st.ys[st.ys.length-1]));sctx.closePath();sctx.fill();
+  const Ym=py(st.yTauMax);
+  sctx.fillStyle='#0B7285';
+  sctx.beginPath();sctx.arc(tx0+st.tauMax*tScale,Ym,3.4,0,7);sctx.fill();
+  sctx.font='600 10.5px "IBM Plex Mono",monospace';
+  sctx.fillText('τmax='+st.tauMax.toFixed(2)+' MPa',tx0+8,Ym-8);
+  sctx.fillStyle='#5C6B78';sctx.font='11px Archivo,sans-serif';
+  sctx.fillText('Shear τ(y) @ x = '+r.xs[r.iV].toFixed(2)+' m',tx0,16);
+}
+function beamVerify(r,props,extra){
+  const box=document.getElementById('bVerifyBody');
+  const L=beam.L,EI=(MATS[beam.mat].E*1e9)*(props.Ix*1e-12);
+  const onlyLoads=beam.loads.filter(l=>Math.abs(l.P)>1e-9);
+  const udlOn=beam.udl.on&&Math.abs(beam.udl.w)>1e-9&&beam.udl.x2>beam.udl.x1;
+  const row=(n,c,t)=>{
+    const err=Math.abs(c-t)/Math.max(Math.abs(t),1e-12)*100;
+    return `<tr><td>${n}</td><td>${c.toFixed(3)}</td><td>${t.toFixed(3)}</td>`+
+           `<td class="${err<0.5?'ok':''}">${err.toFixed(2)}%</td></tr>`;
+  };
+  let html=null;
+  if(!beam.self&&onlyLoads.length===1&&!udlOn&&Math.abs(onlyLoads[0].a-L/2)<1e-9){
+    const P=onlyLoads[0].P*1e3;
+    html='<p class="verify-msg" style="margin-bottom:6px">Single point load at midspan</p>'+
+      '<table class="verify"><tr><th>Qty</th><th>Computed</th><th>PL/4 · PL³/48EI</th><th>Δ</th></tr>'+
+      row('Mmax (kN·m)',r.M[r.iM]/1e3,P*L/4/1e3)+
+      row('δmax (mm)',Math.abs(extra.dmm),P*L**3/(48*EI)*1e3)+'</table>';
+  } else if(!beam.self&&onlyLoads.length===0&&udlOn&&beam.udl.x1<=1e-9&&Math.abs(beam.udl.x2-L)<1e-9){
+    const w=beam.udl.w*1e3;
+    html='<p class="verify-msg" style="margin-bottom:6px">Uniform load over the full span</p>'+
+      '<table class="verify"><tr><th>Qty</th><th>Computed</th><th>wL²/8 · 5wL⁴/384EI</th><th>Δ</th></tr>'+
+      row('Mmax (kN·m)',r.M[r.iM]/1e3,w*L*L/8/1e3)+
+      row('δmax (mm)',Math.abs(extra.dmm),5*w*L**4/(384*EI)*1e3)+'</table>';
+  }
+  box.innerHTML=html||'<p class="verify-msg">General loading — no single textbook twin. Set one midspan point load, or a full-span UDL alone, to unlock the closed-form comparison.</p>';
+}
+function renderLoadRows(){
+  const box=document.getElementById('loadRows');
+  box.innerHTML='';
+  beam.loads.forEach((l,i)=>{
+    const div=document.createElement('div');
+    div.className='loadrow';
+    div.innerHTML=`<span class="tag">P${i+1}</span>`+
+      `P <input type="number" class="num w44" data-k="P" data-i="${i}" value="${l.P}" step="0.5"> kN at `+
+      `<input type="number" class="num w44" data-k="a" data-i="${i}" value="${l.a}" step="0.1"> m `+
+      `<button class="tiny" data-del="${i}" title="Remove">×</button>`;
+    box.appendChild(div);
+  });
+  box.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      const i=+inp.dataset.i,k=inp.dataset.k;
+      beam.loads[i][k]=+inp.value||0;
+      if(k==='a')beam.loads[i].a=Math.min(Math.max(beam.loads[i].a,0),beam.L);
+      beamRecalc(sectionProps());
+    });
+  });
+  box.querySelectorAll('[data-del]').forEach(b=>{
+    b.onclick=()=>{beam.loads.splice(+b.dataset.del,1);renderLoadRows();beamRecalc(sectionProps());};
+  });
+}
+document.getElementById('bAddLoad').onclick=()=>{
+  beam.loads.push({P:10,a:+(beam.L/2).toFixed(2)});
+  renderLoadRows();beamRecalc(sectionProps());
+};
+document.getElementById('bL').addEventListener('input',e=>{
+  beam.L=Math.max(0.5,+e.target.value||4);
+  beam.udl.x2=Math.min(beam.udl.x2,beam.L);
+  document.getElementById('uX2').value=beam.udl.x2;
+  beam.loads.forEach(l=>l.a=Math.min(l.a,beam.L));
+  renderLoadRows();beamRecalc(sectionProps());
+});
+document.getElementById('bMat').addEventListener('change',e=>{beam.mat=e.target.value;beamRecalc(sectionProps());});
+document.getElementById('bSelf').addEventListener('change',e=>{beam.self=e.target.checked;beamRecalc(sectionProps());});
+document.getElementById('uOn').addEventListener('change',e=>{beam.udl.on=e.target.checked;beamRecalc(sectionProps());});
+document.getElementById('uW').addEventListener('input',e=>{beam.udl.w=+e.target.value||0;beamRecalc(sectionProps());});
+document.getElementById('uX1').addEventListener('input',e=>{beam.udl.x1=Math.min(Math.max(+e.target.value||0,0),beam.L);beamRecalc(sectionProps());});
+document.getElementById('uX2').addEventListener('input',e=>{beam.udl.x2=Math.min(Math.max(+e.target.value||0,0),beam.L);beamRecalc(sectionProps());});
+
+let bdrag=null;
+bcv.addEventListener('pointerdown',ev=>{
+  if(!bres)return;
+  const {sx,sy}=canvasPos(ev,bcv);
+  const beamY=(BAND.sch.y0+BAND.sch.y1)/2+18;
+  if(sy>BAND.sch.y0&&sy<beamY){
+    for(let i=0;i<beam.loads.length;i++){
+      if(Math.abs(sx-bpx(beam.loads[i].a))<12){bdrag=i;bcv.setPointerCapture(ev.pointerId);return;}
+    }
+  }
+});
+bcv.addEventListener('pointermove',ev=>{
+  if(!bres)return;
+  const {sx}=canvasPos(ev,bcv);
+  const x=Math.min(Math.max((sx-BX0)/(BX1-BX0)*beam.L,0),beam.L);
+  document.getElementById('bCoord').textContent='x '+x.toFixed(2)+' m';
+  if(bdrag!=null){
+    beam.loads[bdrag].a=+(Math.round(x*20)/20).toFixed(2);
+    renderLoadRows();beamRecalc(sectionProps());
+    drawBeamDiagrams(bres.r,x);
+    return;
+  }
+  drawBeamDiagrams(bres.r,x);
+});
+bcv.addEventListener('pointerup',()=>{bdrag=null;});
+bcv.addEventListener('pointerleave',()=>{if(bres)drawBeamDiagrams(bres.r);});
+
+/* ██████████████████ OPTIMIZER (main-thread side) ██████████████████ */
+const ocv=document.getElementById('ostage'),octx=ocv.getContext('2d');
+const opt={
+  worker:null,busy:false,dsBusy:false,
+  orig:null,origE:null,best:null,bestE:null,
+  hist:[],iter:0,iters:0,paused:false,
+  csv:null,
+};
+
+function buildWorker(){
+  const fns=[P_signedArea,P_integrals,P_section,P_clipAbove,P_slice,P_intervals,
+    P_segX,P_selfX,P_pairX,P_pointIn,P_validGeom,P_beam,P_tauMax,P_eval,
+    P_mulberry,P_gauss,P_copy,P_scaleAll,P_mutate,
+    T_arc,T_rrect,T_ibeam,T_box,T_channel,T_tsec,T_rect,T_build,
+    P_cost,P_rubric,P_evalP,P_mutP,P_procMats,P_seedParams];
+  const src=fns.map(f=>f.toString()).join('\n\n')+'\n('+W_main.toString()+')();';
+  return new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+}
+function getWorker(){
+  if(!opt.worker){
+    opt.worker=buildWorker();
+    opt.worker.onmessage=onWorkerMsg;
+    opt.worker.onerror=e=>{
+      opt.busy=false;opt.dsBusy=false;optButtons();
+      document.getElementById('oIter').textContent='worker error: '+e.message;
+    };
+  }
+  return opt.worker;
+}
+function optOpts(){
+  return {
+    wM:1-(+document.getElementById('oW').value)/100,
+    fosT:Math.max(1,+document.getElementById('oFos').value||2),
+    tmin:Math.max(1,+document.getElementById('oTmin').value||6),
+    env:Math.max(1,+document.getElementById('oEnv').value||1.2),
+    defOn:document.getElementById('oDefOn').checked,
+    defR:Math.max(60,+document.getElementById('oDefR').value||360),
+    iters:Math.max(200,+document.getElementById('oIters').value||4000),
+    seed:(+document.getElementById('oSeed').value||42)>>>0,
+  };
+}
+function onWorkerMsg(e){
+  const d=e.data;
+  if(d.mode==='param'||['doneP','perr','tinit','tbest','tfam','tdone','pdsprog','pdsdone'].indexOf(d.type)>=0){onDsMsg(d);return;}
+  if(d.type==='init'){
+    opt.origE=d.orig;
+    opt.hist=[{i:0,obj:d.orig.obj,mass:d.orig.mass,dmm:d.orig.dmm}];
+  }else if(d.type==='best'){
+    opt.best=d.contours;opt.bestE=d.m;
+    opt.hist.push({i:d.iter,obj:d.m.obj,mass:d.m.mass,dmm:d.m.dmm});
+    requestOptDraw();
+  }else if(d.type==='tick'){
+    opt.iter=d.iter;opt.iters=d.iters;
+    document.getElementById('oIter').textContent='iter '+d.iter+' / '+d.iters;
+    document.getElementById('oAcc').textContent='accept '+(d.acc*100).toFixed(0)+'%';
+    document.getElementById('oTemp').textContent='T '+d.T.toExponential(1);
+    document.getElementById('oInval').textContent='rejected-invalid '+d.inval;
+    opt.hist.push({i:d.iter,obj:d.bestObj,mass:d.m.mass,dmm:d.m.dmm});
+    requestOptDraw();
+  }else if(d.type==='done'){
+    opt.best=d.contours;opt.bestE=d.m;opt.busy=false;opt.paused=false;
+    document.getElementById('oIter').textContent='done · iter '+d.iter;
+    optButtons();scoreboard();requestOptDraw();
+  }else if(d.type==='dsprog'){
+    const pr=document.getElementById('dProg');
+    pr.style.display='block';pr.value=d.done/d.n*100;
+    document.getElementById('dMsg').textContent=d.done+' / '+d.n;
+  }else if(d.type==='dsdone'){
+    opt.dsBusy=false;
+    opt.csv=[d.header.join(',')].concat(d.rows.map(r=>r.join(','))).join('\n');
+    document.getElementById('dDl').disabled=false;
+    document.getElementById('dMsg').textContent=d.rows.length+' rows ready';
+    document.getElementById('dProg').style.display='none';
+    optButtons();
+  }
+}
+let optDrawQueued=false;
+function requestOptDraw(){
+  if(optDrawQueued)return;
+  optDrawQueued=true;
+  requestAnimationFrame(()=>{optDrawQueued=false;drawOpt();});
+}
+function optButtons(){
+  document.getElementById('oStart').disabled=opt.busy||opt.dsBusy||!sectionProps();
+  document.getElementById('oPause').disabled=!opt.busy;
+  document.getElementById('oStop').disabled=!opt.busy;
+  document.getElementById('oApply').disabled=!opt.best;
+  document.getElementById('dGen').disabled=opt.busy||opt.dsBusy||!sectionProps();
+}
+document.getElementById('oStart').onclick=()=>{
+  const pr=sectionProps();if(!pr||opt.busy)return;
+  opt.orig=P_copy(state.contours);
+  opt.best=null;opt.bestE=null;opt.hist=[];opt.paused=false;
+  opt.busy=true;optButtons();
+  getWorker().postMessage({cmd:'start',contours:P_copy(state.contours),cfg:mkCfg(),opts:optOpts()});
+};
+document.getElementById('oPause').onclick=()=>{
+  if(!opt.busy)return;
+  opt.paused=!opt.paused;
+  document.getElementById('oPause').textContent=opt.paused?'▶ Resume':'⏸ Pause';
+  getWorker().postMessage({cmd:'pause',v:opt.paused});
+};
+document.getElementById('oStop').onclick=()=>{
+  if(opt.busy)getWorker().postMessage({cmd:'stop'});
+};
+document.getElementById('oApply').onclick=()=>{
+  if(!opt.best)return;
+  state.contours=P_copy(opt.best);
+  state.presetKey=null;
+  fitView();
+  showTab('sec');
+};
+document.getElementById('oReset').onclick=()=>{
+  if(opt.busy)getWorker().postMessage({cmd:'stop'});
+  opt.best=null;opt.bestE=null;opt.origE=null;opt.hist=[];opt.iter=0;
+  document.getElementById('oPause').textContent='⏸ Pause';
+  document.getElementById('oScore').innerHTML='<p class="verify-msg">Run an optimization to populate the comparison.</p>';
+  optButtons();drawOpt();
+};
+
+function scoreboard(){
+  if(!opt.origE||!opt.bestE){return;}
+  const o=opt.origE,b=opt.bestE;
+  const row=(name,ov,bv,fmtF,lowerBetter)=>{
+    const d=(bv-ov)/Math.max(Math.abs(ov),1e-12)*100;
+    const good=lowerBetter?d<0:d>0;
+    return `<tr><td>${name}</td><td>${fmtF(ov)}</td><td>${fmtF(bv)}</td>`+
+      `<td class="${Math.abs(d)<0.05?'':(good?'up':'dn')}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
+  };
+  const f1=v=>v.toFixed(1),f2=v=>v.toFixed(2),f3=v=>v.toFixed(3);
+  document.getElementById('oScore').innerHTML=
+    `<table class="verify"><tr><th>Metric</th><th>Yours</th><th>Annealed</th><th>Δ</th></tr>`+
+    row('Mass (kg)',o.mass,b.mass,f1,true)+
+    row('Cost ($)',o.cost,b.cost,f2,true)+
+    row('δmax (mm)',o.dmm,b.dmm,f3,true)+
+    row('FoS bending',Math.min(o.FoSb,99),Math.min(b.FoSb,99),f2,false)+
+    row('FoS shear',Math.min(o.FoSs,99),Math.min(b.FoSs,99),f2,false)+
+    row('Smin/A (mm)',o.eff,b.eff,f2,false)+
+    `</table>`+
+    ((o.FoSb<optOpts().fosT)?'<p class="verify-msg" style="margin-top:6px">Your original design was below the FoS target — notice the annealer spent its first moves buying safety before it started trimming weight.</p>':'');
+}
+
+/* evolution + convergence rendering */
+function drawOpt(){
+  const w=ocv.width,h=ocv.height;
+  octx.clearRect(0,0,w,h);
+  octx.fillStyle='#FDFDFB';octx.fillRect(0,0,w,h);
+  const shapeH=396,chartY0=440;
+  const pr=sectionProps();
+  if(!opt.orig&&!pr){
+    octx.fillStyle='#8896A2';octx.font='13px Archivo,sans-serif';
+    octx.fillText('Draw a section in the Section Lab, set loads in the Beam Lab, then press Optimize.',40,50);
+    return;
+  }
+  const ghost=opt.orig||state.contours;
+  const bestC=opt.best;
+  // fit union bbox
+  let xmin=1/0,xmax=-1/0,ymin=1/0,ymax=-1/0;
+  const eat=cs=>{for(const c of cs)for(const p of c.pts){
+    if(p.x<xmin)xmin=p.x;if(p.x>xmax)xmax=p.x;
+    if(p.y<ymin)ymin=p.y;if(p.y>ymax)ymax=p.y;}};
+  eat(ghost);if(bestC)eat(bestC);
+  const pad=46;
+  const sc=Math.min((w-2*pad)/Math.max(xmax-xmin,1),(shapeH-2*pad)/Math.max(ymax-ymin,1));
+  const px=x=>pad+(x-xmin)*sc+(w-2*pad-(xmax-xmin)*sc)/2;
+  const py=y=>shapeH-pad-(y-ymin)*sc-(shapeH-2*pad-(ymax-ymin)*sc)/2;
+  const trace=(cs,cx2)=>{
+    cx2.beginPath();
+    for(const c of cs){
+      if(c.pts.length<3)continue;
+      c.pts.forEach((p,i)=>i?cx2.lineTo(px(p.x),py(p.y)):cx2.moveTo(px(p.x),py(p.y)));
+      cx2.closePath();
+    }
+  };
+  // ghost (original)
+  trace(ghost,octx);
+  octx.strokeStyle='#9AA6B0';octx.setLineDash([6,5]);octx.lineWidth=1.3;octx.stroke();
+  octx.setLineDash([]);
+  // best
+  if(bestC){
+    trace(bestC,octx);
+    octx.fillStyle='rgba(217,72,15,0.10)';octx.fill('evenodd');
+    octx.strokeStyle='#D9480F';octx.lineWidth=2;octx.stroke();
+    const bp=P_section(bestC);
+    if(bp){
+      octx.strokeStyle='#16232D';octx.setLineDash([5,4]);octx.lineWidth=1;
+      octx.beginPath();octx.moveTo(px(bp.xmin)-12,py(bp.cy));octx.lineTo(px(bp.xmax)+12,py(bp.cy));octx.stroke();
+      octx.setLineDash([]);
+    }
+  }
+  // metrics strip
+  octx.fillStyle='#16232D';octx.font='600 12px "IBM Plex Mono",monospace';
+  if(opt.bestE){
+    const b=opt.bestE;
+    octx.fillText(
+      `best: mass ${b.mass.toFixed(1)} kg · δ ${b.dmm.toFixed(2)} mm · FoS_b ${Math.min(b.FoSb,99).toFixed(2)} · FoS_s ${Math.min(b.FoSs,99).toFixed(2)} · $ ${b.cost.toFixed(2)}`,
+      pad-14,shapeH+16);
+  }else if(opt.origE){
+    octx.fillText('starting design evaluated — annealing…',pad-14,shapeH+16);
+  }else{
+    octx.fillStyle='#8896A2';octx.font='12px Archivo,sans-serif';
+    octx.fillText('Press Optimize — the annealer mutates your sketch vertex by vertex, and every accepted step appears here.',pad-14,shapeH+16);
+  }
+  // convergence chart
+  drawConvergence(chartY0,h-16);
+}
+function drawConvergence(y0,y1){
+  const w=ocv.width;
+  const x0=70,x1=w-30;
+  octx.strokeStyle='#D5DFE7';octx.lineWidth=1;
+  octx.strokeRect(x0,y0,x1-x0,y1-y0);
+  octx.fillStyle='#9AA6B0';octx.font='700 11px "IBM Plex Mono",monospace';
+  octx.fillText('objective (best-so-far)',x0+8,y0+14);
+  if(opt.hist.length<2)return;
+  const it1=Math.max(opt.iter,opt.hist[opt.hist.length-1].i,1);
+  let omin=1/0,omax=-1/0;
+  for(const p2 of opt.hist){if(p2.obj<omin)omin=p2.obj;if(p2.obj>omax)omax=p2.obj;}
+  if(omax-omin<1e-12)omax=omin+1;
+  const PX=i=>x0+(i/it1)*(x1-x0);
+  const PY=o=>y1-8-((o-omin)/(omax-omin))*(y1-y0-28);
+  octx.strokeStyle='#D9480F';octx.lineWidth=1.8;
+  octx.beginPath();
+  opt.hist.forEach((p2,k)=>{
+    const X=PX(p2.i),Y=PY(p2.obj);
+    k?octx.lineTo(X,Y):octx.moveTo(X,Y);
+  });
+  octx.stroke();
+  octx.fillStyle='#D9480F';octx.font='600 10.5px "IBM Plex Mono",monospace';
+  const last=opt.hist[opt.hist.length-1];
+  octx.fillText(last.obj.toFixed(4),Math.min(PX(last.i)+6,x1-56),PY(last.obj)-4);
+  octx.fillStyle='#9AA6B0';octx.font='10.5px "IBM Plex Mono",monospace';
+  octx.fillText('iter →',x1-44,y1-6);
+}
+
+/* ---- data factory ---- */
+document.getElementById('dGen').onclick=()=>{
+  const pr=sectionProps();if(!pr||opt.busy||opt.dsBusy)return;
+  opt.dsBusy=true;opt.csv=null;
+  document.getElementById('dDl').disabled=true;
+  document.getElementById('dMsg').textContent='running…';
+  optButtons();
+  getWorker().postMessage({cmd:'dataset',
+    contours:P_copy(state.contours),
+    mats:Object.values(MATS),
+    n:Math.max(50,+document.getElementById('dN').value||500),
+    seed:(+document.getElementById('dSeed').value||7)>>>0,
+    jitter:document.getElementById('dJit').checked});
+};
+document.getElementById('dDl').onclick=()=>{
+  if(!opt.csv)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([opt.csv],{type:'text/csv'}));
+  a.download='beam-studio-dataset.csv';
+  document.body.appendChild(a);a.click();a.remove();
+};
+
+/* ██████████████████ DESIGN STUDIO (tab ④, main-thread side) ██████████████████ */
+const dcv=document.getElementById('dstage'),dctx=dcv.getContext('2d');
+
+const FAMS={
+  ibeam:{label:'I-beam',compat:['rolled','welded'],params:[
+    {k:'d', lab:'Depth d',           lo:140,hi:420,def:220,step:2},
+    {k:'bf',lab:'Flange width b_f',  lo:70, hi:260,def:120,step:2},
+    {k:'tf',lab:'Flange thick t_f',  lo:6,  hi:40, def:16, step:0.5},
+    {k:'tw',lab:'Web thick t_w',     lo:5,  hi:30, def:10, step:0.5},
+    {k:'r', lab:'Root fillet r',     lo:0,  hi:24, def:12, step:1}]},
+  box:{label:'Hollow box',compat:['extrusion','welded'],params:[
+    {k:'B',lab:'Width B',        lo:60,hi:300,def:150,step:2},
+    {k:'D',lab:'Depth D',        lo:80,hi:400,def:220,step:2},
+    {k:'t',lab:'Wall t',         lo:3, hi:25, def:10, step:0.5},
+    {k:'r',lab:'Corner radius r',lo:0, hi:15, def:6,  step:0.5}]},
+  channel:{label:'Channel',compat:['rolled','welded'],params:[
+    {k:'d', lab:'Depth d',         lo:80,hi:320,def:180,step:2},
+    {k:'bf',lab:'Flange width b_f',lo:40,hi:140,def:70, step:2},
+    {k:'tf',lab:'Flange thick t_f',lo:5, hi:30, def:12, step:0.5},
+    {k:'tw',lab:'Web thick t_w',   lo:5, hi:25, def:10, step:0.5},
+    {k:'r', lab:'Root fillet r',   lo:0, hi:18, def:10, step:1}]},
+  tsec:{label:'Tee',compat:['rolled','welded','extrusion'],params:[
+    {k:'bf',lab:'Flange width b_f',lo:60,hi:260,def:140,step:2},
+    {k:'tf',lab:'Flange thick t_f',lo:6, hi:36, def:16, step:0.5},
+    {k:'dw',lab:'Stem depth d_w',  lo:60,hi:320,def:144,step:2},
+    {k:'tw',lab:'Stem thick t_w',  lo:5, hi:28, def:12, step:0.5},
+    {k:'r', lab:'Root fillet r',   lo:0, hi:20, def:10, step:1}]},
+  rect:{label:'Solid rectangle',compat:['timber','rolled'],params:[
+    {k:'b',lab:'Breadth b',lo:38,hi:300,def:120,step:2},
+    {k:'h',lab:'Depth h',  lo:64,hi:400,def:180,step:2}]},
+};
+const PROCS={
+  rolled:   {label:'Hot-rolled (steel)',   mat:'steel'},
+  welded:   {label:'Welded plate (steel)', mat:'steel'},
+  extrusion:{label:'Extrusion (alu 6061)', mat:'alu'},
+  timber:   {label:'Sawn timber (fir)',    mat:'wood'},
+};
+const EXPL={
+  d:'Depth is the cheapest stiffness there is — I grows with d³ while area grows only linearly.',
+  D:'Depth is the cheapest stiffness there is — I grows with d³ while area grows only linearly.',
+  h:'Depth cubed drives stiffness — the oldest rule in beam design.',
+  bf:'Flange area works at the biggest lever arm (≈ d/2), so width buys bending capacity efficiently — but every mm² is mass.',
+  B:'Width mostly serves Iy and stability; it adds mass faster than it adds Ix.',
+  b:'Breadth resists rolling over sideways; depth does the bending work.',
+  tf:'Flange thickness acts like width, and it also buys back the b/t buckling margin.',
+  tw:'The web mainly carries shear — for bending it is nearly dead weight, so expect it to be thinned to a limit.',
+  t:'Wall thickness trades mass directly against the b/t buckling limit — optimizers ride that limit.',
+  r:'Fillets barely move the section properties; they exist for the rolls, the die, and the stress concentrations.',
+  dw:'Stem depth deepens the section, but an unstiffened stem hits its slenderness limit quickly.',
+};
+
+const ds={family:'ibeam',process:'rolled',mat:'steel',mode:'tourney',params:{},qty:100,busy:false,
+  boundsAll:{},orig:null,origE:null,best:null,bestC:null,bestE:null,hist:[],log:[],
+  mile:null,met:null,target:null,tRunning:false,tFam:'',tFi:0,tNf:0,tIters:0,pcsv:null};
+
+function dsCfg(){const c=mkCfg();c.mat=MATS[ds.mat];return c;}
+function dsBoundsFor(fk,proc){
+  if(!ds.boundsAll[fk]){
+    const b={};for(const pd of FAMS[fk].params)b[pd.k]=[pd.lo,pd.hi];
+    ds.boundsAll[fk]=b;
+  }
+  const src=ds.boundsAll[fk],out={};
+  for(const k in src){
+    const lo=Math.min(src[k][0],src[k][1]),hi=Math.max(src[k][0],src[k][1]);
+    out[k]=[lo,hi];
+  }
+  if(proc==='welded'&&out.r)out.r=[0,0];
+  return out;
+}
+function dsButtons(){
+  document.getElementById('dsStart').disabled=opt.busy||opt.dsBusy||ds.busy;
+  document.getElementById('dsStop').disabled=!ds.busy;
+  document.getElementById('dsApply').disabled=!(ds.bestC||T_build(ds.family,ds.params));
+}
+function dsLogAdd(iter,msg){ds.log.push({iter,msg});dsLogRender();}
+function dsLogRender(){
+  const el=document.getElementById('dsLog');
+  if(!ds.log.length){el.innerHTML='<span style="color:#9AA6B0">Press Optimize and the story of the run appears here: safety bought, mass trimmed, limits hit.</span>';return;}
+  el.innerHTML=ds.log.map(l=>'<div><b>iter '+l.iter+'</b> — '+l.msg+'</div>').join('');
+  el.scrollTop=el.scrollHeight;
+}
+function dsRenderProc(){
+  const sel=document.getElementById('dsProc');
+  sel.innerHTML=FAMS[ds.family].compat
+    .map(k=>`<option value="${k}"${k===ds.process?' selected':''}>${PROCS[k].label}</option>`).join('');
+}
+function dsApplyProcessRules(){
+  if(ds.process==='welded'&&'r' in ds.params)ds.params.r=0;
+}
+function dsSetFamily(f){
+  ds.family=f;
+  const F=FAMS[f];
+  if(!ds.target)ds.target=P_copy(dsTarget());
+  const tp=ds.target?P_section(ds.target):null;
+  const bnd=dsBoundsFor(f);
+  const seeded=tp?P_seedParams(f,bnd,tp):null;
+  ds.params={};
+  for(const pd of F.params){
+    let v=(seeded&&isFinite(seeded[pd.k]))?seeded[pd.k]:pd.def;
+    v=Math.round(v/pd.step)*pd.step;
+    ds.params[pd.k]=Math.min(bnd[pd.k][1],Math.max(bnd[pd.k][0],v));
+  }
+  if(!F.compat.includes(ds.process))ds.process=F.compat[0];
+  if(P_procMats(ds.process).indexOf(ds.mat)<0){
+    const ok=F.compat.find(pk=>P_procMats(pk).indexOf(ds.mat)>=0);
+    if(ok)ds.process=ok;else ds.mat=P_procMats(ds.process)[0]||ds.mat;
+    const msel=document.getElementById('dsMat');if(msel)msel.value=ds.mat;
+  }
+  dsRenderProc();dsApplyProcessRules();dsClearResult(false);
+  dsRenderParams();dsPreview();
+}
+function dsClearResult(note){
+  ds.best=null;ds.bestC=null;ds.bestE=null;ds.origE=null;ds.hist=[];
+  if(note)dsLogAdd('—','parameters edited — previous optimization cleared');
+  else{ds.log=[];dsLogRender();}
+  document.getElementById('dsScore').innerHTML='<p class="verify-msg">Optimize to compare your starting point against the engineered optimum — and against the free-form “mathematician’s answer” from tab ③, if you’ve run one.</p>';
+  document.getElementById('dsBinds').innerHTML='<p class="verify-msg">After a run, the active constraints and parameter sensitivities appear here — the “why” behind the shape.</p>';
+}
+function dsRenderParams(){
+  const box=document.getElementById('dsParams');box.innerHTML='';
+  dsBoundsFor(ds.family); // ensure bounds exist
+  const head=document.createElement('div');head.className='prow';
+  head.style.cssText='font-size:10px;color:#9AA6B0;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px';
+  head.innerHTML='<span></span><span>start</span><span>min</span><span>max</span>';
+  box.appendChild(head);
+  for(const pd of FAMS[ds.family].params){
+    const dis=(ds.process==='welded'&&pd.k==='r');
+    const b=ds.boundsAll[ds.family][pd.k];
+    const row=document.createElement('div');row.className='prow';
+    row.innerHTML=
+      `<span>${pd.lab}${dis?' <span style="color:#9AA6B0">(flat)</span>':''}</span>`+
+      `<input type="number" class="num" data-k="${pd.k}" data-role="v" step="${pd.step}" value="${dis?0:ds.params[pd.k]}"${dis?' disabled':''}>`+
+      `<input type="number" class="num" data-k="${pd.k}" data-role="lo" step="${pd.step}" value="${dis?0:b[0]}"${dis?' disabled':''}>`+
+      `<input type="number" class="num" data-k="${pd.k}" data-role="hi" step="${pd.step}" value="${dis?0:b[1]}"${dis?' disabled':''}>`;
+    box.appendChild(row);
+  }
+  box.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      const k=inp.dataset.k,role=inp.dataset.role,v=+inp.value;
+      if(!isFinite(v))return;
+      if(role==='v')ds.params[k]=v;
+      else{
+        const b=ds.boundsAll[ds.family][k];
+        if(role==='lo')b[0]=v;else b[1]=v;
+      }
+      if(ds.bestC){ds.best=null;ds.bestC=null;ds.bestE=null;dsLogAdd('—','parameters edited — previous result cleared');}
+      dsPreview();
+    });
+  });
+}
+function dsParamSync(){
+  document.getElementById('dsParams').querySelectorAll('input[data-role="v"]').forEach(inp=>{
+    const k=inp.dataset.k;
+    if(k in ds.params)inp.value=Math.round(ds.params[k]*10)/10;
+  });
+}
+function dsPreview(){
+  const mat=MATS[ds.mat];
+  const contours=T_build(ds.family,ds.params);
+  const rub=P_rubric(ds.family,ds.process,ds.params,mat);
+  let met=null;
+  if(contours){
+    const cfg=dsCfg();
+    const e=P_eval(contours,cfg,optOpts(),{mass:1,dmm:1});
+    if(e.ok){
+      e.cost=P_cost(ds.family,ds.process,ds.params,e.mass,cfg.L,mat,ds.qty);
+      met=e;
+    }
+  }
+  ds.met=met;
+  const fosT=optOpts().fosT;
+  const mrow=(k,v,cls)=>`<tr><td class="k">${k}</td><td class="v${cls?' '+cls:''}">${v}</td></tr>`;
+  document.getElementById('dsMet').innerHTML=met?
+    '<table class="props">'+
+    mrow('Mass',met.mass.toFixed(1)+'<span class="unit">kg</span>')+
+    mrow('Cost — '+PROCS[ds.process].label,'$'+met.cost.toFixed(2))+
+    mrow('δmax',met.dmm.toFixed(2)+'<span class="unit">mm</span>')+
+    mrow('FoS bending',Math.min(met.FoSb,99).toFixed(2),met.FoSb<1?'bad':(met.FoSb>=fosT?'good':''))+
+    mrow('FoS shear',Math.min(met.FoSs,99).toFixed(2),met.FoSs<1?'bad':(met.FoSs>=fosT?'good':''))+
+    '</table>':
+    '<p class="verify-msg">Invalid parameter combination — the template cannot close this shape.</p>';
+  const pct=Math.round(rub.score*100);
+  document.getElementById('dsRub').innerHTML=
+    `<div style="margin-bottom:6px;font-size:12px">Manufacturability score `+
+    `<b class="mono" style="color:${rub.hardFail?'#C92A2A':pct>=85?'#2B8A3E':'#B25E09'}">${pct}%</b>`+
+    (rub.hardFail?' <span class="badge fail">HARD FAIL — optimizer will refuse this</span>':'')+`</div>`+
+    rub.items.map(it=>
+      `<div class="rubitem"><span class="badge ${it.status}">${it.status==='pass'?'PASS':it.status==='marginal'?'NEAR LIMIT':'FAIL'}</span>`+
+      `<div><div>${it.name}${it.hard?' <span style="color:#9AA6B0;font-size:10px">(hard)</span>':''}</div>`+
+      `<div class="why">${it.why}</div></div></div>`).join('');
+  dsButtons();requestDsDraw();
+}
+
+/* ---- drawing: dimensioned section + convergence ---- */
+let dsDrawQueued=false;
+function requestDsDraw(){
+  if(dsDrawQueued)return;
+  dsDrawQueued=true;
+  requestAnimationFrame(()=>{dsDrawQueued=false;drawDs();});
+}
+function dsDim(c2,x0,y0,x1,y1,label){
+  c2.strokeStyle='#5C6B78';c2.lineWidth=1;
+  c2.beginPath();c2.moveTo(x0,y0);c2.lineTo(x1,y1);c2.stroke();
+  const dx=x1-x0,dy=y1-y0,len=Math.hypot(dx,dy)||1,nx=-dy/len*4,ny=dx/len*4;
+  c2.beginPath();
+  c2.moveTo(x0-nx,y0-ny);c2.lineTo(x0+nx,y0+ny);
+  c2.moveTo(x1-nx,y1-ny);c2.lineTo(x1+nx,y1+ny);
+  c2.stroke();
+  c2.fillStyle='#5C6B78';c2.font='600 10.5px "IBM Plex Mono",monospace';
+  const mx=(x0+x1)/2,my=(y0+y1)/2;
+  if(Math.abs(dx)>=Math.abs(dy))c2.fillText(label,mx-(label.length*3.2),my-5);
+  else c2.fillText(label,mx+8,my+3);
+}
+function drawDs(){
+  const w=dcv.width,h=dcv.height;
+  dctx.clearRect(0,0,w,h);
+  dctx.fillStyle='#FDFDFB';dctx.fillRect(0,0,w,h);
+  const shapeH=372;
+  const showP=ds.best||ds.params;
+  const cur=ds.bestC||T_build(ds.family,ds.params);
+  if(!cur){
+    dctx.fillStyle='#8896A2';dctx.font='13px Archivo,sans-serif';
+    dctx.fillText('Invalid parameter combination.',40,50);
+    return;
+  }
+  const ghost=ds.target?ds.target:((ds.bestC&&ds.orig)?T_build(ds.family,ds.orig):null);
+  let xmin=1/0,xmax=-1/0,ymin=1/0,ymax=-1/0;
+  const eat=cs=>{for(const c of cs)for(const p of c.pts){
+    if(p.x<xmin)xmin=p.x;if(p.x>xmax)xmax=p.x;
+    if(p.y<ymin)ymin=p.y;if(p.y>ymax)ymax=p.y;}};
+  eat(cur);if(ghost)eat(ghost);
+  const pad=62;
+  const sc=Math.min((w-2*pad)/Math.max(xmax-xmin,1),(shapeH-2*pad)/Math.max(ymax-ymin,1));
+  const px=x=>pad+(x-xmin)*sc+(w-2*pad-(xmax-xmin)*sc)/2;
+  const py=y=>shapeH-pad+34-(y-ymin)*sc-(shapeH-2*pad-(ymax-ymin)*sc)/2;
+  const trace=cs=>{
+    dctx.beginPath();
+    for(const c of cs){
+      if(c.pts.length<3)continue;
+      c.pts.forEach((p,i)=>i?dctx.lineTo(px(p.x),py(p.y)):dctx.moveTo(px(p.x),py(p.y)));
+      dctx.closePath();
+    }
+  };
+  if(ghost){
+    trace(ghost);
+    dctx.strokeStyle='#9AA6B0';dctx.setLineDash([6,5]);dctx.lineWidth=1.3;dctx.stroke();
+    dctx.setLineDash([]);
+  }
+  trace(cur);
+  dctx.fillStyle='rgba(11,114,133,0.10)';dctx.fill('evenodd');
+  dctx.strokeStyle='#0B7285';dctx.lineWidth=2;dctx.stroke();
+  const pr2=P_section(cur);
+  if(pr2){
+    dctx.strokeStyle='#16232D';dctx.setLineDash([5,4]);dctx.lineWidth=1;
+    dctx.beginPath();dctx.moveTo(px(pr2.xmin)-12,py(pr2.cy));dctx.lineTo(px(pr2.xmax)+12,py(pr2.cy));dctx.stroke();
+    dctx.setLineDash([]);
+  }
+  let legend='';
+  if(ds.tRunning){
+    dctx.fillStyle='#D9480F';dctx.font='700 13px "IBM Plex Mono",monospace';
+    dctx.fillText('auditioning: '+(FAMS[ds.tFam]?FAMS[ds.tFam].label:'…')+' ('+(ds.tFi+1)+'/'+ds.tNf+')',pad-18,26);
+  }else{
+    const P=showP,F=ds.family;
+    const dimX=px(xmax)+26,dimY=py(ymax)-20;
+    if(F==='ibeam'||F==='channel'){
+      dsDim(dctx,dimX,py(0),dimX,py(P.d),'d='+Math.round(P.d));
+      dsDim(dctx,px(F==='ibeam'?-P.bf/2:0),dimY,px(F==='ibeam'?P.bf/2:P.bf),dimY,'bf='+Math.round(P.bf));
+      legend='t_f '+P.tf.toFixed(1)+' · t_w '+P.tw.toFixed(1)+' · r '+(P.r||0).toFixed(0)+' mm';
+    }else if(F==='box'){
+      dsDim(dctx,dimX,py(0),dimX,py(P.D),'D='+Math.round(P.D));
+      dsDim(dctx,px(-P.B/2),dimY,px(P.B/2),dimY,'B='+Math.round(P.B));
+      legend='wall t '+P.t.toFixed(1)+' · r '+(P.r||0).toFixed(0)+' mm';
+    }else if(F==='tsec'){
+      dsDim(dctx,dimX,py(0),dimX,py(P.dw+P.tf),'d='+Math.round(P.dw+P.tf));
+      dsDim(dctx,px(-P.bf/2),dimY,px(P.bf/2),dimY,'bf='+Math.round(P.bf));
+      legend='t_f '+P.tf.toFixed(1)+' · t_w '+P.tw.toFixed(1)+' · r '+(P.r||0).toFixed(0)+' mm';
+    }else if(F==='rect'){
+      dsDim(dctx,dimX,py(0),dimX,py(P.h),'h='+Math.round(P.h));
+      dsDim(dctx,px(-P.b/2),dimY,px(P.b/2),dimY,'b='+Math.round(P.b));
+    }
+  }
+  if(legend){
+    dctx.fillStyle='#5C6B78';dctx.font='600 11px "IBM Plex Mono",monospace';
+    dctx.fillText(legend,pad-18,shapeH+14);
+  }
+  const e=ds.bestE||ds.met;
+  dctx.fillStyle='#16232D';dctx.font='600 12px "IBM Plex Mono",monospace';
+  if(e){
+    dctx.fillText(
+      (ds.bestE?'best: ':'current: ')+e.mass.toFixed(1)+' kg · $'+e.cost.toFixed(2)+
+      ' · δ '+e.dmm.toFixed(2)+' mm · FoS_b '+Math.min(e.FoSb,99).toFixed(2)+
+      ' · FoS_s '+Math.min(e.FoSs,99).toFixed(2)+
+      (e.rub?' · rubric '+Math.round(e.rub.score*100)+'%':''),
+      pad-18,shapeH+34);
+  }
+  const y0=430,y1=h-16,x0=70,x1=w-30;
+  dctx.strokeStyle='#D5DFE7';dctx.lineWidth=1;
+  dctx.strokeRect(x0,y0,x1-x0,y1-y0);
+  dctx.fillStyle='#9AA6B0';dctx.font='700 11px "IBM Plex Mono",monospace';
+  dctx.fillText('objective (best-so-far)',x0+8,y0+14);
+  if(ds.hist.length>=2){
+    const it1=Math.max(ds.hist[ds.hist.length-1].i,1);
+    let omin=1/0,omax=-1/0;
+    for(const q of ds.hist){if(q.obj<omin)omin=q.obj;if(q.obj>omax)omax=q.obj;}
+    if(omax-omin<1e-12)omax=omin+1;
+    const PX=i=>x0+(i/it1)*(x1-x0);
+    const PY=o=>y1-8-((o-omin)/(omax-omin))*(y1-y0-28);
+    dctx.strokeStyle='#0B7285';dctx.lineWidth=1.8;
+    dctx.beginPath();
+    ds.hist.forEach((q,k)=>{k?dctx.lineTo(PX(q.i),PY(q.obj)):dctx.moveTo(PX(q.i),PY(q.obj));});
+    dctx.stroke();
+    const last=ds.hist[ds.hist.length-1];
+    dctx.fillStyle='#0B7285';dctx.font='600 10.5px "IBM Plex Mono",monospace';
+    dctx.fillText(last.obj.toFixed(4),Math.min(PX(last.i)+6,x1-56),PY(last.obj)-4);
+    dctx.fillStyle='#9AA6B0';dctx.fillText('iter →',x1-44,y1-6);
+  }
+}
+
+/* ---- worker message handling for parametric mode ---- */
+function onDsMsg(d){
+  if(d.type==='perr'){
+    ds.busy=false;opt.busy=false;ds.tRunning=false;
+    document.getElementById('dsIter').textContent=d.msg;
+    dsButtons();optButtons();
+    return;
+  }
+  if(d.type==='init'){
+    ds.origE=d.orig;
+    ds.hist=[{i:0,obj:d.orig.obj}];
+    const fosT=optOpts().fosT;
+    if(d.tgt){
+      ds.tgtM=d.tgt;
+      dsLogAdd(0,'fitting '+FAMS[ds.family].label+' to the free-form target: '+d.tgt.mass.toFixed(1)+
+        ' kg, δ '+d.tgt.dmm.toFixed(2)+' mm — objective 1.0 = target performance');
+    }
+    dsLogAdd(0,'starting design: '+d.orig.mass.toFixed(1)+' kg, FoS '+Math.min(d.orig.FoSb,99).toFixed(2)+
+      ', δ '+d.orig.dmm.toFixed(2)+' mm, rubric '+Math.round(d.orig.rub.score*100)+'%'+
+      (d.orig.FoSb<fosT?' — below the FoS target: expect the annealer to buy safety first':''));
+    ds.mile={fos:d.orig.FoSb>=fosT,m90:false,m75:false,lastImp:0,plat:false};
+  }else if(d.type==='best'){
+    ds.best=d.params;ds.bestC=d.contours;ds.bestE=d.m;
+    ds.hist.push({i:d.iter,obj:d.m.obj});
+    if(ds.mile){
+      ds.mile.lastImp=d.iter;
+      const fosT=optOpts().fosT;
+      if(!ds.mile.fos&&d.m.FoSb>=fosT){ds.mile.fos=true;
+        dsLogAdd(d.iter,'safety bought — bending FoS reached '+fosT.toFixed(1)+'; now the mass trimming begins');}
+      if(ds.origE&&!ds.mile.m90&&d.m.mass<0.9*ds.origE.mass){ds.mile.m90=true;
+        dsLogAdd(d.iter,'10% lighter than the start — watch which rubric rows drift toward NEAR LIMIT');}
+      if(ds.origE&&!ds.mile.m75&&d.m.mass<0.75*ds.origE.mass){ds.mile.m75=true;
+        dsLogAdd(d.iter,'25% lighter — the design is now riding its constraints');}
+    }
+    requestDsDraw();
+  }else if(d.type==='tick'){
+    document.getElementById('dsIter').textContent='iter '+d.iter+' / '+d.iters;
+    document.getElementById('dsAcc').textContent='accept '+(d.acc*100).toFixed(0)+'% · rejected '+d.inval;
+    ds.hist.push({i:d.iter,obj:d.bestObj});
+    if(ds.mile&&!ds.mile.plat&&ds.mile.lastImp>0&&d.iter-ds.mile.lastImp>0.3*d.iters){
+      ds.mile.plat=true;
+      dsLogAdd(d.iter,'objective has plateaued — diminishing returns; the binding constraints explain why');
+    }
+    requestDsDraw();
+  }else if(d.type==='doneP'){
+    ds.best=d.params;ds.bestC=d.contours;ds.bestE=d.m;
+    ds.busy=false;opt.busy=false;
+    document.getElementById('dsIter').textContent='done · iter '+d.iter;
+    dsLogAdd(d.iter,'finished — '+d.m.mass.toFixed(1)+' kg at FoS '+Math.min(d.m.FoSb,99).toFixed(2)+
+      ', rubric '+Math.round(d.m.rub.score*100)+'%');
+    ds.params={};
+    for(const k in d.params)ds.params[k]=d.params[k];
+    dsParamSync();
+    dsRenderBinds(d.binds,d.sens);
+    dsScoreboard();
+    dsButtons();optButtons();
+    dsPreview();
+  }else if(d.type==='tinit'){
+    ds.tgtM=d.target;
+    ds.hist=[];
+    dsLogAdd(0,'tournament target: '+d.target.mass.toFixed(1)+' kg, δ '+d.target.dmm.toFixed(2)+
+      ' mm, FoS '+Math.min(d.target.FoSb,99).toFixed(2)+' under current loads in '+MATS[ds.mat].name+
+      ' — auditioning '+d.nf+' families');
+  }else if(d.type==='tbest'){
+    ds.best=d.params;ds.bestC=d.contours;ds.bestE=d.m;
+    ds.tFam=d.family;ds.tFi=d.fi;ds.tNf=d.nf;ds.tIters=d.iters;
+    ds.hist.push({i:d.fi*d.iters+d.iter,obj:d.m.obj});
+    document.getElementById('dsIter').textContent=
+      FAMS[d.family].label+' · family '+(d.fi+1)+'/'+d.nf+' · iter '+d.iter+'/'+d.iters;
+    requestDsDraw();
+  }else if(d.type==='tfam'){
+    if(d.ok){
+      ds.hist.push({i:(d.fi+1)*(ds.tIters||1),obj:d.m.obj});
+      dsLogAdd((d.fi+1)+'/'+d.nf,FAMS[d.family].label+': '+d.m.mass.toFixed(1)+' kg · $'+
+        d.m.cost.toFixed(0)+' · FoS '+Math.min(d.m.FoSb,99).toFixed(2)+' · rubric '+
+        Math.round(d.m.rub.score*100)+'%');
+    }else{
+      dsLogAdd((d.fi+1)+'/'+d.nf,FAMS[d.family].label+': no feasible design within bounds — skipped');
+    }
+  }else if(d.type==='tdone'){
+    ds.busy=false;opt.busy=false;ds.tRunning=false;
+    document.getElementById('dsIter').textContent=d.stopped?'tournament stopped':'tournament complete';
+    dsRenderTourney(d);
+    dsButtons();optButtons();
+    requestDsDraw();
+  }else if(d.type==='pdsprog'){
+    const pr=document.getElementById('dpProg');
+    pr.style.display='block';pr.value=d.done/d.n*100;
+    document.getElementById('dpMsg').textContent=d.done+' / '+d.n;
+  }else if(d.type==='pdsdone'){
+    ds.busy=false;opt.busy=false;
+    ds.pcsv=[d.header.join(',')].concat(d.rows.map(r=>r.join(','))).join('\n');
+    document.getElementById('dpDl').disabled=false;
+    document.getElementById('dpMsg').textContent=d.rows.length+' optimized designs ready';
+    document.getElementById('dpProg').style.display='none';
+    dsButtons();optButtons();
+  }
+}
+function dsRenderTourney(d){
+  const res=d.results||[];
+  if(!res.length){document.getElementById('dsScore').innerHTML='<p class="verify-msg">No tournament results.</p>';return;}
+  const t=ds.tgtM;
+  let html='<table class="verify"><tr><th>Family · route</th><th>kg</th><th>$</th><th>δ mm</th><th>FoS</th><th>Rub</th></tr>';
+  if(t)html+='<tr><td>— free-form target</td><td>'+t.mass.toFixed(1)+'</td><td>—</td><td>'+
+    t.dmm.toFixed(2)+'</td><td>'+Math.min(t.FoSb,99).toFixed(2)+'</td><td>—</td></tr>';
+  res.forEach((r,i)=>{
+    if(!r.ok){html+='<tr><td>'+FAMS[r.family].label+'</td><td colspan="5" style="text-align:left;color:#9AA6B0">infeasible within bounds</td></tr>';return;}
+    html+='<tr'+(i===d.winner?' class="win"':'')+'><td>'+FAMS[r.family].label+' · '+
+      PROCS[r.process].label.split(' ')[0]+'</td><td>'+r.m.mass.toFixed(1)+'</td><td>'+
+      r.m.cost.toFixed(0)+'</td><td>'+r.m.dmm.toFixed(2)+'</td><td>'+
+      Math.min(r.m.FoSb,99).toFixed(2)+'</td><td>'+Math.round(r.m.rub.score*100)+'%</td></tr>';
+  });
+  html+='</table>';
+  if(d.winner>=0){
+    const w=res[d.winner];
+    html+='<p class="note" style="margin-top:8px"><b>'+FAMS[w.family].label+
+      '</b> is the best manufacturable match to the target. Its optimized dimensions are loaded in the panel — switch Mode to “Single family” and Optimize it for the full active-constraint &amp; sensitivity report.</p>';
+    ds.family=w.family;
+    document.getElementById('dsFam').value=w.family;
+    ds.process=w.process;
+    dsRenderProc();
+    ds.params={};for(const k in w.params)ds.params[k]=w.params[k];
+    ds.best={};for(const k in w.params)ds.best[k]=w.params[k];
+    ds.bestC=T_build(w.family,w.params);
+    ds.bestE=w.m;
+    dsRenderParams();dsParamSync();
+    dsLogAdd('★','winner: '+FAMS[w.family].label+' at '+w.m.mass.toFixed(1)+' kg'+
+      (t?' vs target '+t.mass.toFixed(1)+' kg — the gap is the price of manufacturability':''));
+  }
+  document.getElementById('dsScore').innerHTML=html;
+  document.getElementById('dsBinds').innerHTML='<p class="verify-msg">The tournament ranks families. For the “why” — active constraints and sensitivities — run the winner in Single-family mode.</p>';
+}
+function dsRenderBinds(binds,sens){
+  let html='<p class="note" style="margin-bottom:6px"><b>Active constraints</b> — a good design is one where you know exactly what’s stopping a better one:</p>';
+  html+=binds.map(b=>'<div class="rubitem"><span class="badge marginal">ACTIVE</span><div>'+b+'</div></div>').join('');
+  if(sens&&sens.length){
+    const ranked=sens.slice().sort((a,b)=>(Math.abs(b.mass)+Math.abs(b.dmm))-(Math.abs(a.mass)+Math.abs(a.dmm))).slice(0,3);
+    const mx=Math.max(1e-9,...ranked.map(s=>Math.max(Math.abs(s.mass),Math.abs(s.dmm))));
+    html+='<p class="note" style="margin:10px 0 4px"><b>Most influential knobs</b> — full-range sensitivity of mass (teal) and deflection (grey):</p>';
+    for(const s of ranked){
+      html+=`<div class="senrow"><span>${s.k}</span><div>`+
+        `<div class="senbar" style="width:${(Math.abs(s.mass)/mx*100).toFixed(0)}%"></div>`+
+        `<div class="senbar" style="width:${(Math.abs(s.dmm)/mx*100).toFixed(0)}%;background:#9AA6B0;margin-top:2px"></div>`+
+        `</div></div>`+
+        `<div class="senwhy">${EXPL[s.k]||''}</div>`;
+    }
+  }
+  document.getElementById('dsBinds').innerHTML=html;
+}
+function dsScoreboard(){
+  if(!ds.origE||!ds.bestE)return;
+  const o=ds.origE,b=ds.bestE;
+  const row=(name,ov,bv,f,lowerBetter)=>{
+    const d2=(bv-ov)/Math.max(Math.abs(ov),1e-12)*100;
+    const good=lowerBetter?d2<0:d2>0;
+    return `<tr><td>${name}</td><td>${f(ov)}</td><td>${f(bv)}</td>`+
+      `<td class="${Math.abs(d2)<0.05?'':(good?'up':'dn')}">${d2>=0?'+':''}${d2.toFixed(1)}%</td></tr>`;
+  };
+  const f1=v=>v.toFixed(1),f2=v=>v.toFixed(2),f0=v=>Math.round(v*100)+'%';
+  let html=
+    `<table class="verify"><tr><th>Metric</th><th>Start</th><th>Optimized</th><th>Δ</th></tr>`+
+    row('Mass (kg)',o.mass,b.mass,f1,true)+
+    row('Cost ($)',o.cost,b.cost,f2,true)+
+    row('δmax (mm)',o.dmm,b.dmm,f2,true)+
+    row('FoS bending',Math.min(o.FoSb,99),Math.min(b.FoSb,99),f2,false)+
+    row('FoS shear',Math.min(o.FoSs,99),Math.min(b.FoSs,99),f2,false)+
+    row('Rubric',o.rub.score,b.rub.score,f0,false)+
+    `</table>`;
+  if(ds.tgtM){
+    html+=`<p class="note" style="margin-top:8px">Free-form target: <b class="mono">${ds.tgtM.mass.toFixed(1)} kg</b>, δ <b class="mono">${ds.tgtM.dmm.toFixed(2)} mm</b> — the mathematician’s answer. The optimized ${FAMS[ds.family].label} is its manufacturable approximation; any gap is the price of being able to actually build it.</p>`;
+  }else if(opt.bestE){
+    html+=`<p class="note" style="margin-top:8px">Free-form annealer (tab ③) reached <b class="mono">${opt.bestE.mass.toFixed(1)} kg</b> on its loading — the mathematician’s answer. Its jagged boundary would fail the rubric above; the gap between it and <b class="mono">${b.mass.toFixed(1)} kg</b> is the price of being able to actually build it.</p>`;
+  }
+  document.getElementById('dsScore').innerHTML=html;
+}
+
+/* ---- controls wiring ---- */
+function dsInit(){
+  const fsel=document.getElementById('dsFam');
+  fsel.innerHTML=Object.keys(FAMS).map(k=>`<option value="${k}">${FAMS[k].label}</option>`).join('');
+  fsel.addEventListener('change',()=>dsSetFamily(fsel.value));
+  const msel=document.getElementById('dsMat');
+  msel.innerHTML=Object.keys(MATS).map(k=>`<option value="${k}">${MATS[k].name}</option>`).join('');
+  msel.addEventListener('change',()=>{
+    ds.mat=msel.value;
+    if(P_procMats(ds.process).indexOf(ds.mat)<0){
+      const ok=FAMS[ds.family].compat.find(pk=>P_procMats(pk).indexOf(ds.mat)>=0);
+      if(ok){ds.process=ok;dsRenderProc();dsApplyProcessRules();dsRenderParams();}
+    }
+    dsClearResult(false);dsPreview();
+  });
+  document.getElementById('dsProc').addEventListener('change',e=>{
+    ds.process=e.target.value;
+    if(P_procMats(ds.process).indexOf(ds.mat)<0){
+      ds.mat=P_procMats(ds.process)[0]||ds.mat;
+      msel.value=ds.mat;
+    }
+    dsApplyProcessRules();dsClearResult(false);
+    dsRenderParams();dsPreview();
+  });
+  const mode=document.getElementById('dsMode');
+  mode.addEventListener('change',()=>{
+    ds.mode=mode.value;
+    fsel.disabled=(ds.mode==='tourney');
+    document.getElementById('dsProc').disabled=(ds.mode==='tourney');
+    document.getElementById('dsStart').textContent=ds.mode==='tourney'?'▶ Run tournament':'▶ Optimize';
+    ds.target=P_copy(dsTarget());
+    if(ds.mode==='single')dsSetFamily(ds.family);
+    dsTgtLabel();requestDsDraw();
+  });
+  document.getElementById('dsQty').addEventListener('input',e=>{
+    ds.qty=Math.max(1,+e.target.value||100);dsPreview();
+  });
+  document.getElementById('dsStart').onclick=()=>{
+    if(opt.busy||opt.dsBusy||ds.busy)return;
+    if(ds.mode==='tourney')startTournamentUI();else startSingleUI();
+  };
+  document.getElementById('dsStop').onclick=()=>{
+    if(ds.busy)getWorker().postMessage({cmd:'stop'});
+  };
+  document.getElementById('dsApply').onclick=()=>{
+    const contours=ds.bestC||T_build(ds.family,ds.params);
+    if(!contours)return;
+    state.contours=P_copy(contours);
+    state.presetKey=null;
+    fitView();
+    showTab('sec');
+  };
+  document.getElementById('dpGen').onclick=()=>{
+    if(opt.busy||opt.dsBusy||ds.busy)return;
+    ds.busy=true;opt.busy=true;ds.pcsv=null;
+    document.getElementById('dpDl').disabled=true;
+    document.getElementById('dpMsg').textContent='running…';
+    dsButtons();optButtons();
+    const fams=Object.keys(FAMS).map(fk=>({family:fk,procs:FAMS[fk].compat.slice(),bounds:dsBoundsFor(fk)}));
+    getWorker().postMessage({cmd:'pdataset',fams,mats:Object.values(MATS),
+      n:Math.max(10,+document.getElementById('dpN').value||100),
+      itersPer:Math.max(50,+document.getElementById('dpIters').value||300),
+      seed:(+document.getElementById('dpSeed').value||11)>>>0,
+      opts:optOpts(),qty:ds.qty});
+  };
+  document.getElementById('dpDl').onclick=()=>{
+    if(!ds.pcsv)return;
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([ds.pcsv],{type:'text/csv'}));
+    a.download='beam-studio-optimized-designs.csv';
+    document.body.appendChild(a);a.click();a.remove();
+  };
+  fsel.disabled=true;
+  document.getElementById('dsProc').disabled=true;
+  dsSetFamily('ibeam');
+  msel.value=ds.mat;
+  dsTgtLabel();
+}
+function dsTarget(){return (opt.best&&opt.best.length)?opt.best:state.contours;}
+function dsTgtLabel(){
+  const el=document.getElementById('dsTgt');
+  el.textContent='target: '+((opt.best&&opt.best.length)?'free-form best (③)':'current sketch (①)');
+}
+function startSingleUI(){
+  ds.target=P_copy(dsTarget());
+  const bounds=dsBoundsFor(ds.family,ds.process);
+  ds.orig={};for(const k in ds.params)ds.orig[k]=ds.params[k];
+  ds.best=null;ds.bestC=null;ds.bestE=null;ds.hist=[];ds.log=[];ds.mile=null;
+  dsLogRender();
+  ds.busy=true;opt.busy=true;
+  dsButtons();optButtons();
+  const p0={};for(const k in ds.params)p0[k]=ds.params[k];
+  if(ds.process==='welded'&&'r' in p0)p0.r=0;
+  getWorker().postMessage({cmd:'startP',family:ds.family,process:ds.process,
+    params:p0,bounds,cfg:dsCfg(),opts:optOpts(),qty:ds.qty,target:ds.target});
+}
+function startTournamentUI(){
+  const target=(opt.best&&opt.best.length)?P_copy(opt.best):P_copy(state.contours);
+  if(!target.length){document.getElementById('dsIter').textContent='draw a section (①) or optimize one (③) first';return;}
+  const tp=P_section(target);
+  if(!tp){document.getElementById('dsIter').textContent='target shape is invalid';return;}
+  const families=[];
+  for(const fk in FAMS){
+    const proc=FAMS[fk].compat.find(pk=>P_procMats(pk).indexOf(ds.mat)>=0);
+    if(!proc)continue;
+    const bounds=dsBoundsFor(fk,proc);
+    families.push({family:fk,process:proc,params0:P_seedParams(fk,bounds,tp),bounds});
+  }
+  if(!families.length){document.getElementById('dsIter').textContent='no family can be made from '+MATS[ds.mat].name;return;}
+  ds.target=target;ds.tRunning=true;ds.tgtM=null;
+  ds.best=null;ds.bestC=null;ds.bestE=null;ds.hist=[];ds.log=[];ds.mile=null;
+  dsLogRender();dsTgtLabel();
+  ds.busy=true;opt.busy=true;
+  dsButtons();optButtons();
+  const o=optOpts();
+  const opts=Object.assign({},o,{iters:Math.max(500,Math.round(o.iters/families.length))});
+  getWorker().postMessage({cmd:'tourney',families,cfg:dsCfg(),opts,qty:ds.qty,target,seed:o.seed});
+}
+
+/* ██ tabs + boot ██ */
+const tabSec=document.getElementById('tabSec'),tabBeam=document.getElementById('tabBeam'),
+      tabOpt=document.getElementById('tabOpt'),tabDs=document.getElementById('tabDs');
+function showTab(which){
+  document.getElementById('viewSection').style.display=which==='sec'?'grid':'none';
+  document.getElementById('viewBeam').style.display=which==='beam'?'grid':'none';
+  document.getElementById('viewOpt').style.display=which==='opt'?'grid':'none';
+  document.getElementById('viewDs').style.display=which==='ds'?'grid':'none';
+  tabSec.classList.toggle('on',which==='sec');
+  tabBeam.classList.toggle('on',which==='beam');
+  tabOpt.classList.toggle('on',which==='opt');
+  tabDs.classList.toggle('on',which==='ds');
+  if(which==='beam')beamRecalc(sectionProps());
+  if(which==='opt'){optButtons();drawOpt();}
+  if(which==='ds'){ds.target=P_copy(dsTarget());dsTgtLabel();dsButtons();dsPreview();}
+}
+tabSec.onclick=()=>showTab('sec');
+tabBeam.onclick=()=>showTab('beam');
+tabOpt.onclick=()=>showTab('opt');
+tabDs.onclick=()=>showTab('ds');
+
+state.contours=PRESETS.ibeam.build();
+state.presetKey='ibeam';
+renderLoadRows();
+fitView();
+dsInit();
+</script>
+</body>
+</html>

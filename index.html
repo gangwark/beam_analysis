@@ -255,7 +255,7 @@
     </div>
 
     <div class="canvasCard">
-      <canvas id="bstage" class="big" width="820" height="660" aria-label="Beam diagrams"></canvas>
+      <canvas id="bstage" class="big" width="820" height="812" aria-label="Beam diagrams"></canvas>
       <div class="statusbar">
         <span id="bCoord">x — m</span>
         <span id="bWarnBar" class="flag"></span>
@@ -269,6 +269,7 @@
       <h2><span class="dot"></span>Loading</h2>
       <div id="loadRows"></div>
       <button class="tiny" id="bAddLoad" style="margin-top:2px">＋ Add point load</button>
+      <p class="note" style="margin-top:6px">Angle θ: <b>90° = straight down</b> (the default), 0° = horizontal to the right, 180° = to the left. F<sub>y</sub> = P·sin θ, F<sub>x</sub> = P·cos θ — the horizontal part becomes axial force.</p>
       <div class="loadrow udlrow" style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
         <span class="tag">UDL</span>
         <label class="chk"><input type="checkbox" id="uOn" checked></label>
@@ -276,20 +277,36 @@
         from <input type="number" class="num w44" id="uX1" value="0" step="0.25">
         to <input type="number" class="num w44" id="uX2" value="4" step="0.25"> m
       </div>
+
+      <div style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
+        <div id="triRows"></div>
+        <button class="tiny" id="bAddTri">＋ Add triangular / trapezoidal load</button>
+        <p class="note" style="margin-top:6px">Set w₁ and w₂ (kN/m) at the two ends: w₁ = 0 gives an increasing triangle, w₂ = 0 a decreasing one, and unequal non-zero values a trapezoid. The solver integrates the real distribution — it is never lumped into a point load.</p>
+      </div>
+
+      <div style="margin-top:12px;border-top:1px dashed var(--line);padding-top:12px">
+        <div id="momRows"></div>
+        <button class="tiny" id="bAddMom">＋ Add applied moment</button>
+        <p class="note" style="margin-top:6px">Applied couple, <b>positive = counter-clockwise</b>. It jumps the bending-moment diagram by −M₀ at its station and leaves the shear diagram continuous.</p>
+      </div>
     </div>
 
     <div class="card">
       <h2><span class="dot teal"></span>Results — driven by your drawn section</h2>
       <table class="props">
         <tr><td class="k">Reactions R₁ , R₂</td><td class="v" id="rR">—</td></tr>
+        <tr><td class="k">ΣF<sub>x</sub> applied / pin H<sub>x</sub></td><td class="v" id="rFx">—</td></tr>
         <tr class="hr"><td class="k">|M|max @ x</td><td class="v" id="rM">—</td></tr>
         <tr><td class="k">|V|max @ x</td><td class="v" id="rV">—</td></tr>
         <tr><td class="k">δmax @ x</td><td class="v" id="rD">—</td></tr>
         <tr><td class="k">Span / deflection</td><td class="v" id="rLd">—</td></tr>
         <tr class="hr"><td class="k">σ top (bending)</td><td class="v" id="rSt">—</td></tr>
         <tr><td class="k">σ bottom (bending)</td><td class="v" id="rSb">—</td></tr>
+        <tr><td class="k">|N|max (axial) @ x</td><td class="v" id="rN">—</td></tr>
+        <tr><td class="k">σ<sub>N</sub> = N/A at critical x</td><td class="v" id="rSn">—</td></tr>
+        <tr><td class="k">σ combined (critical)</td><td class="v" id="rSc">—</td></tr>
         <tr><td class="k">τ max (shear)</td><td class="v" id="rTau">—</td></tr>
-        <tr class="hr"><td class="k">FoS — bending</td><td class="v" id="rFb">—</td></tr>
+        <tr class="hr"><td class="k">FoS — combined normal</td><td class="v" id="rFb">—</td></tr>
         <tr><td class="k">FoS — shear (0.577σ<sub>y</sub>)</td><td class="v" id="rFs">—</td></tr>
         <tr class="hr"><td class="k">Mass</td><td class="v" id="rMass">—</td></tr>
         <tr><td class="k">Material cost</td><td class="v" id="rCost">—</td></tr>
@@ -624,8 +641,51 @@ function P_validGeom(contours,tmin,envBox){
   return true;
 }
 
-/* Simply supported beam. cfg={L, loads:[{P kN,a m}], udl:{on,w kN/m,x1,x2},
-   self:bool, mat:{E GPa, rho, sy MPa, cost}} — props supplies Ix (mm4) & A (mm2).
+/* Partial resultant of a linearly varying (trapezoidal/triangular) load strip,
+   for the portion lying to the LEFT of x. Returns the resultant force W (N)
+   and its centroid cbar (m). Exact — never a lumped point-load approximation.
+   w(s) = w1 + k(s-x1);  W = ∫w ds;  cbar = ∫s·w ds / W. */
+function P_triPart(t,x){
+  const xi=Math.min(Math.max(x,t.x1),t.x2);
+  const d=xi-t.x1;
+  if(d<=1e-12)return {W:0,cbar:t.x1};
+  const span=t.x2-t.x1;
+  const k=span>1e-12?(t.w2-t.w1)/span:0;
+  const W=t.w1*d+k*d*d/2;
+  if(Math.abs(W)<1e-12)return {W:0,cbar:t.x1+d/2};
+  return {W,cbar:t.x1+(t.w1*d*d/2+k*d*d*d/3)/W};
+}
+
+/* Combined normal stress σ = N/A ± M·c/I, scanned along the span at BOTH
+   extreme fibres so axial and bending are summed WITH SIGN before any
+   magnitude comparison. Returns the critical station and its breakdown (MPa).
+   With no axial force this reduces exactly to |M|max·c/I. */
+function P_normStress(r,props){
+  const I=props.Ix*1e-12, A=props.A*1e-6;
+  const ct=props.ctop*1e-3, cb=props.cbot*1e-3;
+  let sMax=0,iC=0,stC=0,sbC=0;
+  for(let i=0;i<r.xs.length;i++){
+    const sn=(r.N?r.N[i]:0)/A;
+    const st=(sn-r.M[i]*ct/I)/1e6;
+    const sb=(sn+r.M[i]*cb/I)/1e6;
+    const mg=Math.max(Math.abs(st),Math.abs(sb));
+    if(mg>sMax+1e-12){sMax=mg;iC=i;stC=st;sbC=sb;}
+  }
+  const snC=((r.N?r.N[iC]:0)/A)/1e6;
+  return {sMax,iC,sTop:stC,sBot:sbC,sN:snC,
+          sBendTop:stC-snC,sBendBot:sbC-snC};
+}
+
+/* Simply supported beam (pin at x=0, roller at x=L).
+   cfg={L, loads:[{P kN, a m, ang deg}], udl:{on,w kN/m,x1,x2},
+        tris:[{on,w1,w2 kN/m,x1,x2}], moms:[{on,M kN·m,a m}],
+        self:bool, mat:{...}} — props supplies Ix (mm4) & A (mm2).
+   SIGN CONVENTION (used identically everywhere in the app):
+     · point-load angle θ: 90° = straight down, 0° = +x (right), 180° = −x
+       Fy(down) = P·sin θ,  Fx(right) = P·cos θ
+     · applied moment M0 positive = counter-clockwise
+     · V, M sagging-positive (upward left reaction gives +V, +M)
+     · N tension-positive; the pin at x=0 carries all horizontal reaction
    Returns SI arrays + maxima. */
 function P_beam(cfg,props,N){
   const L=cfg.L;
@@ -637,21 +697,55 @@ function P_beam(cfg,props,N){
     wSelf=cfg.mat.rho*(props.A*1e-6)*9.81;
     udls.push({w:wSelf,x1:0,x2:L});
   }
-  const P=(cfg.loads||[]).map(l=>({P:l.P*1e3,a:Math.min(Math.max(l.a,0),L)}));
-  let sumP=0,sumM=0;
-  for(const p of P){sumP+=p.P;sumM+=p.P*p.a;}
+  /* linearly varying strips (triangular = one end intensity zero) */
+  const tris=[];
+  if(cfg.tris)for(const t of cfg.tris){
+    if(t.on===false)continue;
+    const x1=Math.max(0,Math.min(t.x1,L)),x2=Math.min(L,Math.max(t.x2,0));
+    if(x2-x1<=1e-9)continue;
+    if(Math.abs(t.w1)<1e-12&&Math.abs(t.w2)<1e-12)continue;
+    tris.push({w1:t.w1*1e3,w2:t.w2*1e3,x1,x2});
+  }
+  /* point loads resolved at their angle; ang omitted ⇒ 90° (straight down) */
+  const P=(cfg.loads||[]).map(l=>{
+    const ang=(l.ang===undefined||l.ang===null||!isFinite(l.ang))?90:l.ang;
+    const th=ang*Math.PI/180, mag=l.P*1e3;
+    return {P:mag,a:Math.min(Math.max(l.a,0),L),ang,
+            fy:mag*Math.sin(th),fx:mag*Math.cos(th)};
+  });
+  /* applied concentrated moments, CCW positive */
+  const moms=[];
+  if(cfg.moms)for(const mm of cfg.moms){
+    if(mm.on===false)continue;
+    if(Math.abs(mm.M)<1e-12)continue;
+    moms.push({M:mm.M*1e3,a:Math.min(Math.max(mm.a,0),L)});
+  }
+  /* ---- equilibrium: ΣFy = 0, ΣM_A = 0, ΣFx = 0 ---- */
+  let sumP=0,sumM=0,sumFx=0,sumM0=0;
+  for(const p of P){sumP+=p.fy;sumM+=p.fy*p.a;sumFx+=p.fx;}
   for(const u of udls){const Wt=u.w*(u.x2-u.x1);sumP+=Wt;sumM+=Wt*(u.x1+u.x2)/2;}
-  const R2=sumM/L,R1=sumP-R2;
-  const xs=new Array(N),V=new Array(N),M=new Array(N);
+  for(const t of tris){const q=P_triPart(t,t.x2);sumP+=q.W;sumM+=q.W*q.cbar;t.W=q.W;t.cbar=q.cbar;}
+  for(const mo of moms)sumM0+=mo.M;
+  const R2=(sumM-sumM0)/L,R1=sumP-R2;
+  const Hx=-sumFx;                       /* pin reaction, +x positive */
+  const xs=new Array(N),V=new Array(N),M=new Array(N),Nax=new Array(N);
   for(let i=0;i<N;i++){
     const x=L*i/(N-1);xs[i]=x;
-    let v=R1,mo=R1*x;
-    for(const p of P){if(x>p.a){v-=p.P;mo-=p.P*(x-p.a);}}
+    let v=R1,mo=R1*x,n=0;
+    for(const p of P){
+      if(x>p.a){v-=p.fy;mo-=p.fy*(x-p.a);}
+      if(p.a>x)n+=p.fx;                  /* N(x) = Σ Fx of loads right of x */
+    }
     for(const u of udls){
       const xi=Math.max(u.x1,Math.min(x,u.x2));
       if(xi>u.x1){v-=u.w*(xi-u.x1);mo-=u.w*(xi-u.x1)*(x-(u.x1+xi)/2);}
     }
-    V[i]=v;M[i]=mo;
+    for(const t of tris){
+      const q=P_triPart(t,x);
+      if(q.W!==0){v-=q.W;mo-=q.W*(x-q.cbar);}
+    }
+    for(const m0 of moms){if(x>m0.a)mo-=m0.M;}   /* CCW moment ⇒ −M0 jump */
+    V[i]=v;M[i]=mo;Nax[i]=n;
   }
   const EI=(cfg.mat.E*1e9)*(props.Ix*1e-12);
   const th=new Array(N).fill(0),def=new Array(N).fill(0),dx=L/(N-1);
@@ -659,13 +753,14 @@ function P_beam(cfg,props,N){
   for(let i=1;i<N;i++)def[i]=def[i-1]+(th[i-1]+th[i])/2*dx;
   const C1=-def[N-1]/L;
   for(let i=0;i<N;i++)def[i]+=C1*xs[i];
-  let iM=0,iV=0,iD=0;
+  let iM=0,iV=0,iD=0,iN=0;
   for(let i=0;i<N;i++){
     if(Math.abs(M[i])>Math.abs(M[iM]))iM=i;
     if(Math.abs(V[i])>Math.abs(V[iV]))iV=i;
     if(Math.abs(def[i])>Math.abs(def[iD]))iD=i;
+    if(Math.abs(Nax[i])>Math.abs(Nax[iN]))iN=i;
   }
-  return {xs,V,M,def,R1,R2,iM,iV,iD,wSelf,udls,P,L};
+  return {xs,V,M,def,N:Nax,R1,R2,Hx,sumFx,iM,iV,iD,iN,wSelf,udls,tris,moms,P,L};
 }
 
 /* Max transverse shear stress via VQ/It over sampled slices.
@@ -692,8 +787,10 @@ function P_eval(contours,cfg,opts,norm){
   if(!props)return {ok:false};
   const r=P_beam(cfg,props,121);
   const I=props.Ix*1e-12;
-  const Mc=Math.abs(r.M[r.iM]);
-  const sig=Mc*(Math.max(props.ctop,props.cbot)*1e-3)/I/1e6;
+  /* critical COMBINED normal stress: axial and bending summed with sign at
+     both fibres, every station — not two independent magnitude checks */
+  const ns=P_normStress(r,props);
+  const sig=ns.sMax;
   const tau=P_tauMax(contours,props,Math.abs(r.V[r.iV]),15,false).tauMax;
   const FoSb=sig>1e-9?cfg.mat.sy/sig:1e9;
   const FoSs=tau>1e-9?0.577*cfg.mat.sy/tau:1e9;
@@ -712,6 +809,7 @@ function P_eval(contours,cfg,opts,norm){
            +(1-opts.wM)*dmm/Math.max(norm.dmm,1e-9)
            +pen;
   return {ok:true,obj,mass,cost:mass*cfg.mat.cost,dmm,FoSb,FoSs,sig,tau,asym,
+          sN:ns.sN,sAx:Math.abs(r.N[r.iN]),
           A:props.A,Ix:props.Ix,eff:Math.min(props.Stop,props.Sbot)/props.A,pen};
 }
 
@@ -1804,14 +1902,17 @@ const MATS={
   wood: {key:'wood', name:'Douglas fir',E:13, rho:530, sy:40, cost:1.2},
 };
 const beam={L:4,mat:'steel',self:false,
-  loads:[{P:10,a:2}],
-  udl:{on:true,w:5,x1:0,x2:4}};
+  loads:[{P:10,a:2,ang:90}],
+  udl:{on:true,w:5,x1:0,x2:4},
+  tris:[],moms:[]};
 let bres=null;
 
 function mkCfg(){
   return {L:beam.L,
-    loads:beam.loads.map(l=>({P:l.P,a:l.a})),
+    loads:beam.loads.map(l=>({P:l.P,a:l.a,ang:(l.ang===undefined?90:l.ang)})),
     udl:{on:beam.udl.on,w:beam.udl.w,x1:beam.udl.x1,x2:beam.udl.x2},
+    tris:beam.tris.map(t=>({on:t.on,w1:t.w1,w2:t.w2,x1:t.x1,x2:t.x2})),
+    moms:beam.moms.map(m=>({on:m.on,M:m.M,a:m.a})),
     self:beam.self, mat:MATS[beam.mat]};
 }
 
@@ -1825,7 +1926,7 @@ function beamRecalc(props){
     bctx.fillStyle='#8896A2';bctx.font='13px Archivo,sans-serif';
     bctx.fillText('Draw a cross-section in the Section Lab first — the beam needs its I.',40,60);
     sctx.clearRect(0,0,scv.width,scv.height);
-    ['rR','rM','rV','rD','rLd','rSt','rSb','rTau','rFb','rFs','rMass','rCost']
+    ['rR','rFx','rM','rV','rD','rLd','rSt','rSb','rN','rSn','rSc','rTau','rFb','rFs','rMass','rCost']
       .forEach(id=>document.getElementById(id).innerHTML='—');
     return;
   }
@@ -1833,12 +1934,12 @@ function beamRecalc(props){
   const r=P_beam(cfg,props,601);
   bres={r,props};
   const I=props.Ix*1e-12;
-  const Mc=r.M[r.iM];
-  const sTop=-Mc*(props.ctop*1e-3)/I/1e6;
-  const sBot= Mc*(props.cbot*1e-3)/I/1e6;
+  const ns=P_normStress(r,props);      /* critical COMBINED normal stress */
+  const sTop=ns.sTop, sBot=ns.sBot;    /* already include N/A with sign */
+  const xC=r.xs[ns.iC];
   const tp=P_tauMax(state.contours,props,Math.abs(r.V[r.iV]),81,true);
   const m=cfg.mat;
-  const sMax=Math.max(Math.abs(sTop),Math.abs(sBot));
+  const sMax=ns.sMax;
   const FoSb=sMax>1e-9?m.sy/sMax:Infinity;
   const FoSs=tp.tauMax>1e-9?0.577*m.sy/tp.tauMax:Infinity;
   const mass=m.rho*(props.A*1e-6)*r.L;
@@ -1849,8 +1950,14 @@ function beamRecalc(props){
   const dmm=r.def[r.iD]*1e3;
   set('rD',dmm.toFixed(3)+'<span class="unit">mm</span> @ '+r.xs[r.iD].toFixed(2)+'<span class="unit">m</span>');
   set('rLd',Math.abs(dmm)>1e-9?'L / '+Math.round(r.L*1e3/Math.abs(dmm)):'—');
+  set('rFx',(r.sumFx/1e3).toFixed(2)+' / '+(r.Hx/1e3).toFixed(2)+'<span class="unit">kN</span>');
   set('rSt',sTop.toFixed(1)+'<span class="unit">MPa</span>'+(sTop<0?' (comp)':' (tens)'));
   set('rSb',sBot.toFixed(1)+'<span class="unit">MPa</span>'+(sBot<0?' (comp)':' (tens)'));
+  const Nmax=r.N[r.iN];
+  set('rN',(Nmax/1e3).toFixed(2)+'<span class="unit">kN</span> @ '+r.xs[r.iN].toFixed(2)+'<span class="unit">m</span>'+
+    (Math.abs(Nmax)<1e-9?'':(Nmax>0?' (tens)':' (comp)')));
+  set('rSn',ns.sN.toFixed(2)+'<span class="unit">MPa</span>');
+  set('rSc',sMax.toFixed(1)+'<span class="unit">MPa</span> @ '+xC.toFixed(2)+'<span class="unit">m</span>');
   set('rTau',tp.tauMax.toFixed(2)+'<span class="unit">MPa</span>');
   const fb=document.getElementById('rFb'),fs=document.getElementById('rFs');
   fb.innerHTML=isFinite(FoSb)?FoSb.toFixed(2):'∞';
@@ -1865,12 +1972,20 @@ function beamRecalc(props){
     wEl.style.display='block';
     wEl.textContent='⚠ Section is unsymmetric (Ixy ≠ 0): plane-bending results are approximate, and the shear-center offset means a vertical load would also twist this beam.';
   } else wEl.style.display='none';
+  /* neutral axis shifts when axial force is present: σ(y)=0 ⇒ y = cy + N·I/(A·M) */
+  const Mc2=r.M[ns.iC], Nc=r.N[ns.iC];
+  let yNAmm=props.cy, naValid=true;
+  if(Math.abs(Mc2)>1e-9){
+    yNAmm=props.cy+1000*(Nc*I)/((props.A*1e-6)*Mc2);
+    if(!isFinite(yNAmm))naValid=false;
+  }else naValid=false;
   drawBeamDiagrams(r);
-  drawStress(r,props,{sTop,sBot,tau:tp.tau,ys:tp.ys,tauMax:tp.tauMax,yTauMax:tp.yTauMax});
+  drawStress(r,props,{sTop,sBot,tau:tp.tau,ys:tp.ys,tauMax:tp.tauMax,yTauMax:tp.yTauMax,
+    sN:ns.sN,sBendTop:ns.sBendTop,sBendBot:ns.sBendBot,xC,yNAmm,naValid});
   beamVerify(r,props,{dmm});
 }
 
-const BAND={sch:{y0:16,y1:168},V:{y0:196,y1:334},M:{y0:362,y1:500},D:{y0:528,y1:648}};
+const BAND={sch:{y0:16,y1:168},N:{y0:196,y1:316},V:{y0:344,y1:464},M:{y0:492,y1:612},D:{y0:640,y1:772}};
 const BX0=70,BX1=790;
 const bpx=x=>BX0+(x/beam.L)*(BX1-BX0);
 
@@ -1878,21 +1993,46 @@ function drawBeamDiagrams(r,hoverX){
   const w=bcv.width,h=bcv.height;
   bctx.clearRect(0,0,w,h);
   bctx.fillStyle='#FDFDFB';bctx.fillRect(0,0,w,h);
-  const beamY=(BAND.sch.y0+BAND.sch.y1)/2+18;
+  const beamY=(BAND.sch.y0+BAND.sch.y1)/2+22;
+  /* common intensity scale so UDL and triangular strips are comparable */
+  let wRef=0;
+  for(const u of r.udls)wRef=Math.max(wRef,Math.abs(u.w));
+  for(const t of r.tris)wRef=Math.max(wRef,Math.abs(t.w1),Math.abs(t.w2));
+  const wH=w2=>wRef>1e-9?6+22*Math.abs(w2)/wRef:26;
   for(const u of r.udls){
-    const x1=bpx(u.x1),x2=bpx(u.x2);
+    const x1=bpx(u.x1),x2=bpx(u.x2),hh=wH(u.w);
     bctx.fillStyle='rgba(11,114,133,0.13)';
-    bctx.fillRect(x1,beamY-30,x2-x1,26);
+    bctx.fillRect(x1,beamY-4-hh,x2-x1,hh);
     bctx.strokeStyle='#0B7285';bctx.lineWidth=1;
-    bctx.strokeRect(x1,beamY-30,x2-x1,26);
+    bctx.strokeRect(x1,beamY-4-hh,x2-x1,hh);
     const na=Math.max(3,Math.floor((x2-x1)/34));
     for(let i=0;i<=na;i++){
       const x=x1+(x2-x1)*i/na;
-      arrow(bctx,x,beamY-12,x,beamY-2,'#0B7285',1.2,4);
+      arrow(bctx,x,beamY-4-Math.min(hh,14),x,beamY-3,'#0B7285',1.2,4);
     }
     bctx.fillStyle='#0B7285';bctx.font='600 11px "IBM Plex Mono",monospace';
-    bctx.fillText((u.w/1e3).toFixed(2)+' kN/m',x1+4,beamY-35);
+    bctx.fillText((u.w/1e3).toFixed(2)+' kN/m',x1+4,beamY-9-hh);
   }
+  /* triangular / trapezoidal strips — drawn as the true linear profile */
+  r.tris.forEach((t,ti)=>{
+    const x1=bpx(t.x1),x2=bpx(t.x2),h1=wH(t.w1),h2=wH(t.w2);
+    const yA=beamY-4-(Math.abs(t.w1)<1e-12?0:h1), yB=beamY-4-(Math.abs(t.w2)<1e-12?0:h2);
+    bctx.beginPath();
+    bctx.moveTo(x1,beamY-4);bctx.lineTo(x1,yA);bctx.lineTo(x2,yB);bctx.lineTo(x2,beamY-4);
+    bctx.closePath();
+    bctx.fillStyle='rgba(43,138,62,0.14)';bctx.fill();
+    bctx.strokeStyle='#2B8A3E';bctx.lineWidth=1.2;bctx.stroke();
+    const na=Math.max(3,Math.floor((x2-x1)/30));
+    for(let i=0;i<=na;i++){
+      const f=i/na,x=x1+(x2-x1)*f,yt=yA+(yB-yA)*f;
+      if(beamY-6-yt>3)arrow(bctx,x,yt+1,x,beamY-3,'#2B8A3E',1.1,4);
+    }
+    bctx.fillStyle='#2B8A3E';bctx.font='600 10.5px "IBM Plex Mono",monospace';
+    bctx.fillText((t.w1/1e3).toFixed(1),x1-4,Math.min(yA,yB)-14);
+    bctx.fillText((t.w2/1e3).toFixed(1)+' kN/m',x2-14,Math.min(yA,yB)-14);
+    bctx.fillText('R='+(t.W/1e3).toFixed(2)+' kN @ '+t.cbar.toFixed(2)+' m',x1+4,Math.min(yA,yB)-3);
+    arrow(bctx,bpx(t.cbar),Math.min(yA,yB)-1,bpx(t.cbar),beamY-3,'#2B8A3E',2,6);
+  });
   bctx.strokeStyle='#16232D';bctx.lineWidth=4;
   bctx.beginPath();bctx.moveTo(bpx(0),beamY);bctx.lineTo(bpx(beam.L),beamY);bctx.stroke();
   support(bctx,bpx(0),beamY,false);
@@ -1904,13 +2044,39 @@ function drawBeamDiagrams(r,hoverX){
   bctx.fillText('R₂='+(r.R2/1e3).toFixed(2),bpx(beam.L)-46,beamY+60);
   bctx.font='600 11px "IBM Plex Mono",monospace';
   r.P.forEach((p,i)=>{
-    const x=bpx(p.a);
-    arrow(bctx,x,beamY-52,x,beamY-4,'#D9480F',2.2,7);
-    bctx.fillStyle='#D9480F';
-    bctx.fillText('P'+(i+1)+'='+(p.P/1e3).toFixed(1)+' kN',x-28,beamY-58);
+    const x=bpx(p.a),th=p.ang*Math.PI/180;
+    /* screen direction of the force: (cos θ, sin θ) — 90° points straight down */
+    const dx=Math.cos(th),dy=Math.sin(th),len=52;
+    const tipX=x-dx*4,tipY=beamY-4-dy*4;
+    arrow(bctx,tipX-dx*len,tipY-dy*len,tipX,tipY,'#D9480F',2.2,7);
+    bctx.fillStyle='#D9480F';bctx.font='600 11px "IBM Plex Mono",monospace';
+    const lx=tipX-dx*len-(dx>0.3?54:(dx<-0.3?-6:28)),ly=tipY-dy*len-(dy>0.3?6:-4);
+    bctx.fillText('P'+(i+1)+'='+(p.P/1e3).toFixed(1)+' kN',lx-28,ly-6);
+    if(Math.abs(p.ang-90)>1e-9){
+      bctx.fillStyle='#8896A2';bctx.font='10px "IBM Plex Mono",monospace';
+      bctx.fillText('θ='+p.ang.toFixed(0)+'°  Fx='+(p.fx/1e3).toFixed(1)+'  Fy='+(p.fy/1e3).toFixed(1),lx-28,ly+6);
+    }
+  });
+  /* applied concentrated moments — arc with an arrowhead, CCW positive */
+  r.moms.forEach((m0,i)=>{
+    const x=bpx(m0.a),ccw=m0.M>0,R=17;
+    bctx.strokeStyle='#7048E8';bctx.lineWidth=2.4;
+    bctx.beginPath();bctx.arc(x,beamY,R,-0.55*Math.PI,0.72*Math.PI,!ccw);bctx.stroke();
+    const ea=ccw?-0.55*Math.PI:0.72*Math.PI;
+    const ex=x+R*Math.cos(ea),ey=beamY+R*Math.sin(ea);
+    const tang=ccw?ea-Math.PI/2:ea+Math.PI/2;
+    bctx.fillStyle='#7048E8';
+    bctx.beginPath();
+    bctx.moveTo(ex+7*Math.cos(tang),ey+7*Math.sin(tang));
+    bctx.lineTo(ex+6*Math.cos(tang+2.5),ey+6*Math.sin(tang+2.5));
+    bctx.lineTo(ex+6*Math.cos(tang-2.5),ey+6*Math.sin(tang-2.5));
+    bctx.closePath();bctx.fill();
+    bctx.font='600 11px "IBM Plex Mono",monospace';
+    bctx.fillText('M'+(i+1)+'='+(m0.M/1e3).toFixed(1)+' kN·m '+(ccw?'↺':'↻'),x-30,beamY+R+30);
   });
   bctx.fillStyle='#8896A2';bctx.font='11px "IBM Plex Mono",monospace';
   bctx.fillText('L = '+beam.L+' m',(BX0+BX1)/2-26,BAND.sch.y1-2);
+  band(bctx,BAND.N,r.xs,r.N,1e-3,'N (kN)','#2B8A3E',r.iN);
   band(bctx,BAND.V,r.xs,r.V,1e-3,'V (kN)','#0B7285',r.iV);
   band(bctx,BAND.M,r.xs,r.M,1e-3,'M (kN·m)','#D9480F',r.iM);
   band(bctx,BAND.D,r.xs,r.def,1e3,'v (mm)','#16232D',r.iD);
@@ -1924,8 +2090,8 @@ function drawBeamDiagrams(r,hoverX){
     bctx.beginPath();bctx.moveTo(xp,BAND.sch.y0);bctx.lineTo(xp,BAND.D.y1);bctx.stroke();
     const i=Math.round(hoverX/beam.L*(r.xs.length-1));
     bctx.fillStyle='#16232D';bctx.font='600 11px "IBM Plex Mono",monospace';
-    const lab=`x=${hoverX.toFixed(2)} m   V=${(r.V[i]/1e3).toFixed(2)} kN   M=${(r.M[i]/1e3).toFixed(2)} kN·m   v=${(r.def[i]*1e3).toFixed(3)} mm`;
-    bctx.fillText(lab,BX0,BAND.V.y0-8);
+    const lab=`x=${hoverX.toFixed(2)} m   N=${(r.N[i]/1e3).toFixed(2)} kN   V=${(r.V[i]/1e3).toFixed(2)} kN   M=${(r.M[i]/1e3).toFixed(2)} kN·m   v=${(r.def[i]*1e3).toFixed(3)} mm`;
+    bctx.fillText(lab,BX0,BAND.N.y0-8);
   }
 }
 function support(c,x,y,roller){
@@ -1994,7 +2160,8 @@ function drawStress(r,props,st){
   };
   const gTop=py(props.ymax),gBot=py(props.ymin);
   const grad=sctx.createLinearGradient(0,gTop,0,gBot);
-  const naFrac=Math.min(Math.max((props.ymax-props.cy)/Math.max(mh,1e-9),0.001),0.999);
+  const yZero=(st.naValid&&st.yNAmm>props.ymin&&st.yNAmm<props.ymax)?st.yNAmm:props.cy;
+  const naFrac=Math.min(Math.max((props.ymax-yZero)/Math.max(mh,1e-9),0.001),0.999);
   grad.addColorStop(0,colFor(st.sTop));
   grad.addColorStop(naFrac,'rgba(255,255,255,0.9)');
   grad.addColorStop(1,colFor(st.sBot));
@@ -2007,7 +2174,7 @@ function drawStress(r,props,st){
   sctx.fillStyle='#EDF1EE';sctx.fill('evenodd');
   sctx.fillStyle=grad;sctx.fill('evenodd');
   sctx.strokeStyle='#16232D';sctx.lineWidth=1.4;sctx.stroke();
-  const yNA=py(props.cy);
+  const yNA=py((st.naValid&&st.yNAmm>props.ymin&&st.yNAmm<props.ymax)?st.yNAmm:props.cy);
   sctx.strokeStyle='#16232D';sctx.setLineDash([5,4]);sctx.lineWidth=1;
   sctx.beginPath();sctx.moveTo(px(props.xmin)-14,yNA);sctx.lineTo(px(props.xmax)+14,yNA);sctx.stroke();
   sctx.setLineDash([]);
@@ -2018,7 +2185,11 @@ function drawStress(r,props,st){
   sctx.fillStyle=st.sBot>=0?'#C92A2A':'#3B5BDB';
   sctx.fillText('σ='+st.sBot.toFixed(1)+' MPa',px(props.xmin),gBot+16);
   sctx.fillStyle='#5C6B78';sctx.font='11px Archivo,sans-serif';
-  sctx.fillText('Bending @ x = '+r.xs[r.iM].toFixed(2)+' m',pad-14,16);
+  sctx.fillText('Combined σ @ x = '+st.xC.toFixed(2)+' m',pad-14,16);
+  if(Math.abs(st.sN)>1e-6){
+    sctx.font='10px "IBM Plex Mono",monospace';sctx.fillStyle='#2B8A3E';
+    sctx.fillText('σN='+st.sN.toFixed(1)+'  σb,top='+st.sBendTop.toFixed(1)+'  σb,bot='+st.sBendBot.toFixed(1)+' MPa',pad-14,30);
+  }
   const tx0=secW+30,tx1=w-24;
   const tScale=st.tauMax>1e-9?(tx1-tx0-40)/st.tauMax:0;
   sctx.strokeStyle='#D5DFE7';sctx.lineWidth=1;
@@ -2047,24 +2218,36 @@ function beamVerify(r,props,extra){
   const L=beam.L,EI=(MATS[beam.mat].E*1e9)*(props.Ix*1e-12);
   const onlyLoads=beam.loads.filter(l=>Math.abs(l.P)>1e-9);
   const udlOn=beam.udl.on&&Math.abs(beam.udl.w)>1e-9&&beam.udl.x2>beam.udl.x1;
+  const triOn=beam.tris.some(t=>t.on!==false&&t.x2>t.x1&&(Math.abs(t.w1)>1e-9||Math.abs(t.w2)>1e-9));
+  const momOn=beam.moms.some(m=>m.on!==false&&Math.abs(m.M)>1e-9);
+  const allDown=beam.loads.every(l=>Math.abs((l.ang===undefined?90:l.ang)-90)<1e-9);
+  const plain=!triOn&&!momOn&&allDown;
   const row=(n,c,t)=>{
     const err=Math.abs(c-t)/Math.max(Math.abs(t),1e-12)*100;
     return `<tr><td>${n}</td><td>${c.toFixed(3)}</td><td>${t.toFixed(3)}</td>`+
            `<td class="${err<0.5?'ok':''}">${err.toFixed(2)}%</td></tr>`;
   };
   let html=null;
-  if(!beam.self&&onlyLoads.length===1&&!udlOn&&Math.abs(onlyLoads[0].a-L/2)<1e-9){
+  if(plain&&!beam.self&&onlyLoads.length===1&&!udlOn&&Math.abs(onlyLoads[0].a-L/2)<1e-9){
     const P=onlyLoads[0].P*1e3;
     html='<p class="verify-msg" style="margin-bottom:6px">Single point load at midspan</p>'+
       '<table class="verify"><tr><th>Qty</th><th>Computed</th><th>PL/4 · PL³/48EI</th><th>Δ</th></tr>'+
       row('Mmax (kN·m)',r.M[r.iM]/1e3,P*L/4/1e3)+
       row('δmax (mm)',Math.abs(extra.dmm),P*L**3/(48*EI)*1e3)+'</table>';
-  } else if(!beam.self&&onlyLoads.length===0&&udlOn&&beam.udl.x1<=1e-9&&Math.abs(beam.udl.x2-L)<1e-9){
+  } else if(plain&&!beam.self&&onlyLoads.length===0&&udlOn&&beam.udl.x1<=1e-9&&Math.abs(beam.udl.x2-L)<1e-9){
     const w=beam.udl.w*1e3;
     html='<p class="verify-msg" style="margin-bottom:6px">Uniform load over the full span</p>'+
       '<table class="verify"><tr><th>Qty</th><th>Computed</th><th>wL²/8 · 5wL⁴/384EI</th><th>Δ</th></tr>'+
       row('Mmax (kN·m)',r.M[r.iM]/1e3,w*L*L/8/1e3)+
       row('δmax (mm)',Math.abs(extra.dmm),5*w*L**4/(384*EI)*1e3)+'</table>';
+  }
+  if(!html&&plain===false&&(triOn||momOn||!allDown)){
+    const bits=[];
+    if(triOn)bits.push('a triangular/trapezoidal strip');
+    if(momOn)bits.push('an applied moment');
+    if(!allDown)bits.push('an angled point load');
+    html='<p class="verify-msg">Superposed loading including '+bits.join(' and ')+
+      ' — no single textbook twin, but each effect is solved exactly: the linear strip is integrated (not lumped), the couple jumps M by −M₀, and the angled load\u2019s F<sub>x</sub> feeds N(x) and the combined σ.</p>';
   }
   box.innerHTML=html||'<p class="verify-msg">General loading — no single textbook twin. Set one midspan point load, or a full-span UDL alone, to unlock the closed-form comparison.</p>';
 }
@@ -2074,17 +2257,27 @@ function renderLoadRows(){
   beam.loads.forEach((l,i)=>{
     const div=document.createElement('div');
     div.className='loadrow';
+    const ang=(l.ang===undefined?90:l.ang);
     div.innerHTML=`<span class="tag">P${i+1}</span>`+
       `P <input type="number" class="num w44" data-k="P" data-i="${i}" value="${l.P}" step="0.5"> kN at `+
-      `<input type="number" class="num w44" data-k="a" data-i="${i}" value="${l.a}" step="0.1"> m `+
+      `<input type="number" class="num w44" data-k="a" data-i="${i}" value="${l.a}" step="0.1"> m, `+
+      `θ <input type="number" class="num w44" data-k="ang" data-i="${i}" value="${ang}" step="15" title="90° = straight down"> ° `+
       `<button class="tiny" data-del="${i}" title="Remove">×</button>`;
     box.appendChild(div);
+    if(Math.abs(ang-90)>1e-9){
+      const th=ang*Math.PI/180;
+      const sub=document.createElement('div');
+      sub.className='note';sub.style.cssText='margin:-2px 0 6px 28px;font-size:11px';
+      sub.innerHTML=`F<sub>x</sub> = ${(l.P*Math.cos(th)).toFixed(2)} kN &nbsp;·&nbsp; F<sub>y</sub> = ${(l.P*Math.sin(th)).toFixed(2)} kN (down)`;
+      box.appendChild(sub);
+    }
   });
   box.querySelectorAll('input').forEach(inp=>{
     inp.addEventListener('input',()=>{
       const i=+inp.dataset.i,k=inp.dataset.k;
       beam.loads[i][k]=+inp.value||0;
       if(k==='a')beam.loads[i].a=Math.min(Math.max(beam.loads[i].a,0),beam.L);
+      if(k==='ang')renderLoadRows();
       beamRecalc(sectionProps());
     });
   });
@@ -2092,16 +2285,94 @@ function renderLoadRows(){
     b.onclick=()=>{beam.loads.splice(+b.dataset.del,1);renderLoadRows();beamRecalc(sectionProps());};
   });
 }
+function renderTriRows(){
+  const box=document.getElementById('triRows');
+  box.innerHTML='';
+  beam.tris.forEach((t,i)=>{
+    const div=document.createElement('div');
+    div.className='loadrow';
+    div.innerHTML=`<span class="tag" style="color:#2B8A3E">T${i+1}</span>`+
+      `<label class="chk"><input type="checkbox" data-t="${i}" data-k="on" ${t.on?'checked':''}></label>`+
+      `w₁ <input type="number" class="num w44" data-t="${i}" data-k="w1" value="${t.w1}" step="0.5"> `+
+      `w₂ <input type="number" class="num w44" data-t="${i}" data-k="w2" value="${t.w2}" step="0.5"> kN/m, `+
+      `<input type="number" class="num w44" data-t="${i}" data-k="x1" value="${t.x1}" step="0.25">→`+
+      `<input type="number" class="num w44" data-t="${i}" data-k="x2" value="${t.x2}" step="0.25"> m `+
+      `<button class="tiny" data-tdel="${i}" title="Remove">×</button>`;
+    box.appendChild(div);
+    if(t.on&&t.x2>t.x1){
+      const span=t.x2-t.x1, W=(t.w1+t.w2)/2*span;
+      let cb=t.x1+span/2;
+      if(Math.abs(t.w1+t.w2)>1e-9)cb=t.x1+span*(t.w1+2*t.w2)/(3*(t.w1+t.w2));
+      const sub=document.createElement('div');
+      sub.className='note';sub.style.cssText='margin:-2px 0 6px 28px;font-size:11px';
+      sub.innerHTML=`resultant R = ${W.toFixed(2)} kN acting at x̄ = ${cb.toFixed(3)} m`;
+      box.appendChild(sub);
+    }
+  });
+  box.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      const i=+inp.dataset.t,k=inp.dataset.k;
+      if(k==='on')beam.tris[i].on=inp.checked;
+      else{
+        beam.tris[i][k]=+inp.value||0;
+        if(k==='x1'||k==='x2')beam.tris[i][k]=Math.min(Math.max(beam.tris[i][k],0),beam.L);
+      }
+      renderTriRows();beamRecalc(sectionProps());
+    });
+  });
+  box.querySelectorAll('[data-tdel]').forEach(b=>{
+    b.onclick=()=>{beam.tris.splice(+b.dataset.tdel,1);renderTriRows();beamRecalc(sectionProps());};
+  });
+}
+function renderMomRows(){
+  const box=document.getElementById('momRows');
+  box.innerHTML='';
+  beam.moms.forEach((m,i)=>{
+    const div=document.createElement('div');
+    div.className='loadrow';
+    div.innerHTML=`<span class="tag" style="color:#7048E8">M${i+1}</span>`+
+      `<label class="chk"><input type="checkbox" data-m="${i}" data-k="on" ${m.on?'checked':''}></label>`+
+      `M₀ <input type="number" class="num w44" data-m="${i}" data-k="M" value="${m.M}" step="1"> kN·m at `+
+      `<input type="number" class="num w44" data-m="${i}" data-k="a" value="${m.a}" step="0.1"> m `+
+      `<span class="mono" style="font-size:11px;color:#7048E8">${m.M>=0?'↺ CCW':'↻ CW'}</span> `+
+      `<button class="tiny" data-mdel="${i}" title="Remove">×</button>`;
+    box.appendChild(div);
+  });
+  box.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      const i=+inp.dataset.m,k=inp.dataset.k;
+      if(k==='on')beam.moms[i].on=inp.checked;
+      else{
+        beam.moms[i][k]=+inp.value||0;
+        if(k==='a')beam.moms[i].a=Math.min(Math.max(beam.moms[i].a,0),beam.L);
+      }
+      renderMomRows();beamRecalc(sectionProps());
+    });
+  });
+  box.querySelectorAll('[data-mdel]').forEach(b=>{
+    b.onclick=()=>{beam.moms.splice(+b.dataset.mdel,1);renderMomRows();beamRecalc(sectionProps());};
+  });
+}
 document.getElementById('bAddLoad').onclick=()=>{
-  beam.loads.push({P:10,a:+(beam.L/2).toFixed(2)});
+  beam.loads.push({P:10,a:+(beam.L/2).toFixed(2),ang:90});
   renderLoadRows();beamRecalc(sectionProps());
+};
+document.getElementById('bAddTri').onclick=()=>{
+  beam.tris.push({on:true,w1:0,w2:8,x1:0,x2:+beam.L.toFixed(2)});
+  renderTriRows();beamRecalc(sectionProps());
+};
+document.getElementById('bAddMom').onclick=()=>{
+  beam.moms.push({on:true,M:10,a:+(beam.L/2).toFixed(2)});
+  renderMomRows();beamRecalc(sectionProps());
 };
 document.getElementById('bL').addEventListener('input',e=>{
   beam.L=Math.max(0.5,+e.target.value||4);
   beam.udl.x2=Math.min(beam.udl.x2,beam.L);
   document.getElementById('uX2').value=beam.udl.x2;
   beam.loads.forEach(l=>l.a=Math.min(l.a,beam.L));
-  renderLoadRows();beamRecalc(sectionProps());
+  beam.tris.forEach(t=>{t.x1=Math.min(t.x1,beam.L);t.x2=Math.min(t.x2,beam.L);});
+  beam.moms.forEach(m=>m.a=Math.min(m.a,beam.L));
+  renderLoadRows();renderTriRows();renderMomRows();beamRecalc(sectionProps());
 });
 document.getElementById('bMat').addEventListener('change',e=>{beam.mat=e.target.value;beamRecalc(sectionProps());});
 document.getElementById('bSelf').addEventListener('change',e=>{beam.self=e.target.checked;beamRecalc(sectionProps());});
@@ -2114,7 +2385,7 @@ let bdrag=null;
 bcv.addEventListener('pointerdown',ev=>{
   if(!bres)return;
   const {sx,sy}=canvasPos(ev,bcv);
-  const beamY=(BAND.sch.y0+BAND.sch.y1)/2+18;
+  const beamY=(BAND.sch.y0+BAND.sch.y1)/2+22;
   if(sy>BAND.sch.y0&&sy<beamY){
     for(let i=0;i<beam.loads.length;i++){
       if(Math.abs(sx-bpx(beam.loads[i].a))<12){bdrag=i;bcv.setPointerCapture(ev.pointerId);return;}
@@ -2148,7 +2419,7 @@ const opt={
 
 function buildWorker(){
   const fns=[P_signedArea,P_integrals,P_section,P_clipAbove,P_slice,P_intervals,
-    P_segX,P_selfX,P_pairX,P_pointIn,P_validGeom,P_beam,P_tauMax,P_eval,
+    P_segX,P_selfX,P_pairX,P_pointIn,P_validGeom,P_triPart,P_normStress,P_beam,P_tauMax,P_eval,
     P_mulberry,P_gauss,P_copy,P_scaleAll,P_mutate,
     T_arc,T_rrect,T_ibeam,T_box,T_channel,T_tsec,T_rect,T_build,
     P_cost,P_rubric,P_evalP,P_mutP,P_procMats,P_seedParams];
@@ -3030,6 +3301,8 @@ tabDs.onclick=()=>showTab('ds');
 state.contours=PRESETS.ibeam.build();
 state.presetKey='ibeam';
 renderLoadRows();
+renderTriRows();
+renderMomRows();
 fitView();
 dsInit();
 </script>

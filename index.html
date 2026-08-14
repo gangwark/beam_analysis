@@ -242,6 +242,9 @@
     <div class="toolbar cfg" aria-label="Beam configuration">
       <label class="chk">Span L <input type="number" class="num" id="bL" value="4" min="0.5" max="30" step="0.5"> m</label>
       <span class="sep"></span>
+      <label class="chk">Pin <input type="number" class="num w44" id="bXA" value="0" min="0" step="0.25"> m</label>
+      <label class="chk">Roller <input type="number" class="num w44" id="bXB" value="4" min="0" step="0.25"> m</label>
+      <span class="sep"></span>
       <label class="chk">Material
         <select class="num" id="bMat">
           <option value="steel">Structural steel</option>
@@ -726,12 +729,24 @@ function P_beam(cfg,props,N){
   for(const u of udls){const Wt=u.w*(u.x2-u.x1);sumP+=Wt;sumM+=Wt*(u.x1+u.x2)/2;}
   for(const t of tris){const q=P_triPart(t,t.x2);sumP+=q.W;sumM+=q.W*q.cbar;t.W=q.W;t.cbar=q.cbar;}
   for(const mo of moms)sumM0+=mo.M;
-  const R2=(sumM-sumM0)/L,R1=sumP-R2;
+  /* support stations: pin xA, roller xB. Defaults 0 and L reproduce the
+     original fixed-end behaviour exactly. */
+  let xA=(cfg.xA===undefined||cfg.xA===null||!isFinite(cfg.xA))?0:Math.min(Math.max(cfg.xA,0),L);
+  let xB=(cfg.xB===undefined||cfg.xB===null||!isFinite(cfg.xB))?L:Math.min(Math.max(cfg.xB,0),L);
+  if(Math.abs(xB-xA)<1e-6)xB=xA+(xA<L/2?1e-6:-1e-6);
+  /* ΣM about the pin: R2·(xB−xA) = Σ W·(x−xA) − ΣM0 ;  ΣFy: R1 = ΣW − R2 */
+  const R2=(sumM-sumP*xA-sumM0)/(xB-xA),R1=sumP-R2;
   const Hx=-sumFx;                       /* pin reaction, +x positive */
+  /* a reaction acts on stations to its right; at its own station the value is
+     the just-to-the-right one, except at the very end of the beam (preserves
+     the original V(0)=R1 / V(L)=−R2 convention) */
+  const actR=(x,xR)=>x>xR+1e-12||(Math.abs(x-xR)<=1e-12&&xR<L-1e-12);
   const xs=new Array(N),V=new Array(N),M=new Array(N),Nax=new Array(N);
   for(let i=0;i<N;i++){
     const x=L*i/(N-1);xs[i]=x;
-    let v=R1,mo=R1*x,n=0;
+    let v=0,mo=0,n=0;
+    if(actR(x,xA)){v+=R1;mo+=R1*(x-xA);}
+    if(actR(x,xB)){v+=R2;mo+=R2*(x-xB);}
     for(const p of P){
       if(x>p.a){v-=p.fy;mo-=p.fy*(x-p.a);}
       if(p.a>x)n+=p.fx;                  /* N(x) = Σ Fx of loads right of x */
@@ -751,8 +766,15 @@ function P_beam(cfg,props,N){
   const th=new Array(N).fill(0),def=new Array(N).fill(0),dx=L/(N-1);
   for(let i=1;i<N;i++)th[i]=th[i-1]+(M[i-1]+M[i])/2*dx/EI;
   for(let i=1;i<N;i++)def[i]=def[i-1]+(th[i-1]+th[i])/2*dx;
-  const C1=-def[N-1]/L;
-  for(let i=0;i<N;i++)def[i]+=C1*xs[i];
+  /* rigid-body correction so the elastic curve is zero at BOTH supports */
+  const dAt=xq=>{
+    const t=Math.min(Math.max(xq,0),L)/L*(N-1);
+    const i0=Math.floor(t),i1=Math.min(i0+1,N-1),f=t-i0;
+    return def[i0]*(1-f)+def[i1]*f;
+  };
+  const dA=dAt(xA),dB=dAt(xB);
+  const C1=-(dB-dA)/(xB-xA),C0=-dA-C1*xA;
+  for(let i=0;i<N;i++)def[i]+=C0+C1*xs[i];
   let iM=0,iV=0,iD=0,iN=0;
   for(let i=0;i<N;i++){
     if(Math.abs(M[i])>Math.abs(M[iM]))iM=i;
@@ -760,7 +782,7 @@ function P_beam(cfg,props,N){
     if(Math.abs(def[i])>Math.abs(def[iD]))iD=i;
     if(Math.abs(Nax[i])>Math.abs(Nax[iN]))iN=i;
   }
-  return {xs,V,M,def,N:Nax,R1,R2,Hx,sumFx,iM,iV,iD,iN,wSelf,udls,tris,moms,P,L};
+  return {xs,V,M,def,N:Nax,R1,R2,Hx,sumFx,xA,xB,iM,iV,iD,iN,wSelf,udls,tris,moms,P,L};
 }
 
 /* Max transverse shear stress via VQ/It over sampled slices.
@@ -1901,14 +1923,14 @@ const MATS={
   ti:   {key:'ti',   name:'Titanium Ti-6Al-4V',E:114,rho:4430,sy:880,cost:23},
   wood: {key:'wood', name:'Douglas fir',E:13, rho:530, sy:40, cost:1.2},
 };
-const beam={L:4,mat:'steel',self:false,
+const beam={L:4,xA:0,xB:4,mat:'steel',self:false,
   loads:[{P:10,a:2,ang:90}],
   udl:{on:true,w:5,x1:0,x2:4},
   tris:[],moms:[]};
 let bres=null;
 
 function mkCfg(){
-  return {L:beam.L,
+  return {L:beam.L,xA:beam.xA,xB:beam.xB,
     loads:beam.loads.map(l=>({P:l.P,a:l.a,ang:(l.ang===undefined?90:l.ang)})),
     udl:{on:beam.udl.on,w:beam.udl.w,x1:beam.udl.x1,x2:beam.udl.x2},
     tris:beam.tris.map(t=>({on:t.on,w1:t.w1,w2:t.w2,x1:t.x1,x2:t.x2})),
@@ -2035,13 +2057,13 @@ function drawBeamDiagrams(r,hoverX){
   });
   bctx.strokeStyle='#16232D';bctx.lineWidth=4;
   bctx.beginPath();bctx.moveTo(bpx(0),beamY);bctx.lineTo(bpx(beam.L),beamY);bctx.stroke();
-  support(bctx,bpx(0),beamY,false);
-  support(bctx,bpx(beam.L),beamY,true);
-  arrow(bctx,bpx(0),beamY+46,bpx(0),beamY+16,'#2B8A3E',1.8,6);
-  arrow(bctx,bpx(beam.L),beamY+46,bpx(beam.L),beamY+16,'#2B8A3E',1.8,6);
+  support(bctx,bpx(r.xA),beamY,false);
+  support(bctx,bpx(r.xB),beamY,true);
+  arrow(bctx,bpx(r.xA),beamY+46,bpx(r.xA),beamY+16,'#2B8A3E',1.8,6);
+  arrow(bctx,bpx(r.xB),beamY+46,bpx(r.xB),beamY+16,'#2B8A3E',1.8,6);
   bctx.fillStyle='#2B8A3E';bctx.font='600 11px "IBM Plex Mono",monospace';
-  bctx.fillText('R₁='+(r.R1/1e3).toFixed(2),bpx(0)-24,beamY+60);
-  bctx.fillText('R₂='+(r.R2/1e3).toFixed(2),bpx(beam.L)-46,beamY+60);
+  bctx.fillText('R₁='+(r.R1/1e3).toFixed(2),bpx(r.xA)-24,beamY+60);
+  bctx.fillText('R₂='+(r.R2/1e3).toFixed(2),bpx(r.xB)-46,beamY+60);
   bctx.font='600 11px "IBM Plex Mono",monospace';
   r.P.forEach((p,i)=>{
     const x=bpx(p.a),th=p.ang*Math.PI/180;
@@ -2221,7 +2243,7 @@ function beamVerify(r,props,extra){
   const triOn=beam.tris.some(t=>t.on!==false&&t.x2>t.x1&&(Math.abs(t.w1)>1e-9||Math.abs(t.w2)>1e-9));
   const momOn=beam.moms.some(m=>m.on!==false&&Math.abs(m.M)>1e-9);
   const allDown=beam.loads.every(l=>Math.abs((l.ang===undefined?90:l.ang)-90)<1e-9);
-  const plain=!triOn&&!momOn&&allDown;
+  const plain=!triOn&&!momOn&&allDown&&Math.abs(beam.xA)<1e-9&&Math.abs(beam.xB-L)<1e-9;
   const row=(n,c,t)=>{
     const err=Math.abs(c-t)/Math.max(Math.abs(t),1e-12)*100;
     return `<tr><td>${n}</td><td>${c.toFixed(3)}</td><td>${t.toFixed(3)}</td>`+
@@ -2366,7 +2388,11 @@ document.getElementById('bAddMom').onclick=()=>{
   renderMomRows();beamRecalc(sectionProps());
 };
 document.getElementById('bL').addEventListener('input',e=>{
+  const oldL=beam.L;
   beam.L=Math.max(0.5,+e.target.value||4);
+  if(Math.abs(beam.xB-oldL)<1e-9)beam.xB=beam.L;
+  beam.xA=Math.min(beam.xA,beam.L);beam.xB=Math.min(beam.xB,beam.L);
+  bSupSync();
   beam.udl.x2=Math.min(beam.udl.x2,beam.L);
   document.getElementById('uX2').value=beam.udl.x2;
   beam.loads.forEach(l=>l.a=Math.min(l.a,beam.L));
@@ -2374,6 +2400,27 @@ document.getElementById('bL').addEventListener('input',e=>{
   beam.moms.forEach(m=>m.a=Math.min(m.a,beam.L));
   renderLoadRows();renderTriRows();renderMomRows();beamRecalc(sectionProps());
 });
+function bSupSync(){
+  document.getElementById('bXA').value=+beam.xA.toFixed(4);
+  document.getElementById('bXB').value=+beam.xB.toFixed(4);
+}
+/* keep the two supports inside the span and never coincident */
+function bSupSet(which,v){
+  const SEP=0.05;
+  v=Math.min(Math.max(isFinite(v)?v:0,0),beam.L);
+  const other=which==='xA'?beam.xB:beam.xA;
+  if(Math.abs(v-other)<SEP){
+    const up=v>=other?1:-1;
+    let cand=other+up*SEP;
+    if(cand<0||cand>beam.L)cand=other-up*SEP;
+    if(cand>=0&&cand<=beam.L)v=cand;
+  }
+  beam[which]=v;
+  bSupSync();
+  beamRecalc(sectionProps());
+}
+document.getElementById('bXA').addEventListener('input',e=>bSupSet('xA',+e.target.value));
+document.getElementById('bXB').addEventListener('input',e=>bSupSet('xB',+e.target.value));
 document.getElementById('bMat').addEventListener('change',e=>{beam.mat=e.target.value;beamRecalc(sectionProps());});
 document.getElementById('bSelf').addEventListener('change',e=>{beam.self=e.target.checked;beamRecalc(sectionProps());});
 document.getElementById('uOn').addEventListener('change',e=>{beam.udl.on=e.target.checked;beamRecalc(sectionProps());});

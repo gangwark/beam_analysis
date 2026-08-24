@@ -3575,6 +3575,394 @@ renderMomRows();
 bSupUI();
 fitView();
 dsInit();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BEAM STUDIO EXTENSION v1 — additive only. Nothing above this line changed.
+     (1) Objective inspector   — numeric decomposition of the ranking objective
+     (2) Formulation duel      — free-form vs constrained, one paired record
+     (3) Feasibility telemetry — where the annealer's budget actually went
+     (4) Beam verification     — live check against closed-form solutions
+   Reuses P_eval / P_evalP / P_beam / P_section. No existing function is
+   reassigned or wrapped; all UI is inserted, never replaced.
+   ══════════════════════════════════════════════════════════════════════════ */
+const BX = (function(){
+  const $$=id=>document.getElementById(id);
+  const f=(v,n)=>(v===null||v===undefined||!isFinite(v))?'—':(+v).toFixed(n===undefined?3:n);
+
+  /* ─── (4) BEAM VERIFICATION vs CLOSED FORM ───────────────────────────── */
+  /* Rectangular test section, solved by the same P_beam() the app uses.     */
+  function rect(b_mm,h_mm){
+    return [{pts:[{x:-b_mm/2,y:-h_mm/2},{x:b_mm/2,y:-h_mm/2},
+                  {x:b_mm/2,y:h_mm/2},{x:-b_mm/2,y:h_mm/2}], isHole:false}];
+  }
+  function verifyBeam(){
+    const mat=MATS[beam.mat]||MATS[Object.keys(MATS)[0]];
+    const pr=P_section(rect(100,200)); if(!pr) return null;
+    const L=4.0, E=mat.E*1e9, I=pr.Ix*1e-12;
+    const base={L, xA:0, xB:L, supType:'pinroller', selfCustom:false, selfW:0,
+      loads:[], udl:{on:false,w:0,x1:0,x2:L}, tris:[{on:false,w1:0,w2:0,x1:0,x2:L}],
+      moms:[{on:false,M:0,a:0}], self:false, mat};
+    const cases=[];
+    const P=10; // kN
+    let cfg=Object.assign({},base,{loads:[{P:P,a:L/2,ang:90}]});
+    let r=P_beam(cfg,pr,2001);
+    cases.push({name:'Simply supported, central point load — M_max',
+      closed:P*1e3*L/4, got:Math.max(...r.M.map(Math.abs)), unit:'N·m', form:'PL/4'});
+    cases.push({name:'Simply supported, central point load — δ_max',
+      closed:(P*1e3*Math.pow(L,3))/(48*E*I)*1e3, got:Math.max(...r.def.map(v=>Math.abs(v)))*1e3,
+      unit:'mm', form:'PL³/48EI'});
+    const w=5; // kN/m
+    cfg=Object.assign({},base,{udl:{on:true,w:w,x1:0,x2:L}});
+    r=P_beam(cfg,pr,2001);
+    cases.push({name:'Simply supported, uniform load — M_max',
+      closed:w*1e3*L*L/8, got:Math.max(...r.M.map(Math.abs)), unit:'N·m', form:'wL²/8'});
+    cases.push({name:'Simply supported, uniform load — δ_max',
+      closed:(5*w*1e3*Math.pow(L,4))/(384*E*I)*1e3, got:Math.max(...r.def.map(v=>Math.abs(v)))*1e3,
+      unit:'mm', form:'5wL⁴/384EI'});
+    cfg=Object.assign({},base,{supType:'fixed',xA:0,xB:L,loads:[{P:P,a:L,ang:90}]});
+    r=P_beam(cfg,pr,2001);
+    cases.push({name:'Cantilever, end point load — M_max',
+      closed:P*1e3*L, got:Math.max(...r.M.map(Math.abs)), unit:'N·m', form:'PL'});
+    cases.push({name:'Cantilever, end point load — δ_max',
+      closed:(P*1e3*Math.pow(L,3))/(3*E*I)*1e3, got:Math.max(...r.def.map(v=>Math.abs(v)))*1e3,
+      unit:'mm', form:'PL³/3EI'});
+    cases.forEach(c=>{ c.err=(c.closed===0)?0:Math.abs(c.got-c.closed)/Math.abs(c.closed)*100; });
+    return {cases, mat:mat.name, I:pr.Ix, L};
+  }
+  function renderVerify(){
+    const el=$$('bxVerifyOut'); if(!el) return;
+    const v=verifyBeam();
+    if(!v){el.innerHTML='<p class="verify-msg">Could not build the test section.</p>';return;}
+    const worst=Math.max(...v.cases.map(c=>c.err));
+    const rows=v.cases.map(c=>{
+      const ok=c.err<0.5;
+      return `<tr><td>${c.name}<br><span class="note" style="opacity:.7">${c.form}</span></td>`+
+        `<td style="text-align:right">${f(c.closed,4)}</td>`+
+        `<td style="text-align:right">${f(c.got,4)}</td>`+
+        `<td style="text-align:right;color:${ok?'var(--ok,#2E6F52)':'var(--bad,#A8322D)'}">${f(c.err,3)} %</td></tr>`;
+    }).join('');
+    el.innerHTML=`<p class="note">Independent of your drawn section: a 100 × 200 mm rectangle, ${f(v.L,1)} m span,
+      ${v.mat}, solved by the same routine the app uses for your beam, compared against textbook closed forms.
+      Worst deviation <b>${f(worst,3)} %</b>.</p>
+      <table class="tbl" style="width:100%;font-size:11.5px"><thead><tr>
+      <th style="text-align:left">Case</th><th style="text-align:right">Closed form</th>
+      <th style="text-align:right">Solver</th><th style="text-align:right">Δ</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+
+  /* ─── (1) OBJECTIVE INSPECTOR ────────────────────────────────────────── */
+  /* Recomputes the ranking objective term by term, using the same P_eval.   */
+  function normFor(cfg,opts){
+    const pr0=P_section(state.contours); if(!pr0) return null;
+    const r0=P_beam(cfg,pr0,121);
+    return {mass:cfg.mat.rho*(pr0.A*1e-6)*cfg.L,
+            dmm:Math.max(Math.abs(r0.def[r0.iD])*1e3,1e-6)};
+  }
+  function decompose(contours,cfg,opts,norm,rub){
+    const e=P_eval(contours,cfg,opts,norm); if(!e||!e.ok) return null;
+    const massT=opts.wM*e.mass/Math.max(norm.mass,1e-9);
+    const deflT=(1-opts.wM)*e.dmm/Math.max(norm.dmm,1e-9);
+    const rubT=rub?2*Math.pow(1-rub.score,2):0;
+    return {e, massT, deflT, pen:e.pen, rubT, total:e.obj+rubT};
+  }
+  function renderObjective(){
+    const el=$$('bxObjOut'); if(!el) return;
+    const cfg=mkCfg(), opts=optOpts(), norm=normFor(cfg,opts);
+    if(!norm){el.innerHTML='<p class="verify-msg">Draw a section first.</p>';return;}
+    const wM=opts.wM;
+    let html=`<p class="note"><b>obj</b> = ${f(wM,2)}·(mass/mass₀) + ${f(1-wM,2)}·(δ/δ₀) + penalties
+      + 2·(1 − manufacturability)²  &nbsp;·&nbsp; slider ${$$('oW').value} ⇒ w<sub>M</sub> = ${f(wM,2)}</p>
+      <p class="note" style="color:var(--bad,#A8322D)"><b>Cost is reported but not optimised.</b> It appears in the
+      scoreboard and the tournament table, and it does not enter this objective. A design can therefore win while
+      costing more.</p>`;
+    const rows=[];
+    // the student's own section
+    const own=decompose(state.contours,cfg,opts,norm,null);
+    if(own) rows.push({label:'Your section', d:own, extra:''});
+    // free-form best, if one exists
+    if(opt.best&&opt.best.length){
+      const d=decompose(opt.best,cfg,opts,norm,null);
+      if(d) rows.push({label:'Free-form optimum', d, extra:''});
+    }
+    // every family at its current/optimised parameters
+    for(const fk in FAMS){
+      const proc=FAMS[fk].compat.find(pk=>P_procMats(pk).indexOf(ds.mat)>=0);
+      if(!proc) continue;
+      let params=null;
+      if(ds.family===fk&&ds.best) params=ds.best;
+      else { const bounds=dsBoundsFor(fk,proc);
+             const tp=P_section(opt.best&&opt.best.length?opt.best:state.contours);
+             if(tp) params=P_seedParams(fk,bounds,tp); }
+      if(!params) continue;
+      const contours=T_build(fk,params); if(!contours) continue;
+      const rub=P_rubric(fk,proc,params,cfg.mat);
+      const d=decompose(contours,cfg,opts,norm,rub);
+      if(!d) continue;
+      const cost=P_cost(fk,proc,params,d.e.mass,cfg.L,cfg.mat,ds.qty||1);
+      rows.push({label:FAMS[fk].label, d, extra:'$'+f(cost,0), rub, seeded:!(ds.family===fk&&ds.best)});
+    }
+    if(!rows.length){el.innerHTML=html+'<p class="verify-msg">Nothing to evaluate yet.</p>';return;}
+    const best=rows.reduce((a,b2)=>b2.d.total<a.d.total?b2:a);
+    html+=`<table class="tbl" style="width:100%;font-size:11.5px"><thead><tr>
+      <th style="text-align:left">Candidate</th><th style="text-align:right">mass term</th>
+      <th style="text-align:right">δ term</th><th style="text-align:right">penalties</th>
+      <th style="text-align:right">rubric</th><th style="text-align:right">TOTAL</th>
+      <th style="text-align:right">mass</th><th style="text-align:right">cost</th></tr></thead><tbody>`;
+    rows.sort((a,b2)=>a.d.total-b2.d.total).forEach(r=>{
+      const win=(r===best);
+      html+=`<tr${win?' style="font-weight:700"':''}><td>${r.label}${r.seeded?' <span class="note" style="opacity:.6">(seeded)</span>':''}</td>`+
+        `<td style="text-align:right">${f(r.d.massT,3)}</td>`+
+        `<td style="text-align:right">${f(r.d.deflT,3)}</td>`+
+        `<td style="text-align:right">${f(r.d.pen,3)}</td>`+
+        `<td style="text-align:right">${f(r.d.rubT,3)}</td>`+
+        `<td style="text-align:right">${f(r.d.total,3)}</td>`+
+        `<td style="text-align:right">${f(r.d.e.mass,1)} kg</td>`+
+        `<td style="text-align:right">${r.extra||'—'}</td></tr>`;
+    });
+    html+='</tbody></table>';
+    html+=`<p class="note" style="margin-top:6px;opacity:.8">Your own section is the normaliser, so it scores exactly
+      1.000 by construction; every other row is relative to it. Rows marked “seeded” are the family's starting
+      dimensions, not an optimised result — run the tournament to replace them.</p>`;
+    const fams=rows.filter(r=>r.label!=='Your section'&&r.label!=='Free-form optimum');
+    const bestF=fams.length?fams.reduce((a,b2)=>b2.d.total<a.d.total?b2:a):null;
+    const lightest=fams.length?fams.reduce((a,b2)=>b2.d.e.mass<a.d.e.mass?b2:a):null;
+    if(bestF&&lightest&&lightest!==bestF){
+      const best=bestF;
+      html+=`<p class="note" style="margin-top:8px;border-left:3px solid currentColor;padding-left:8px">
+        <b>The lightest candidate is not the winner.</b> ${lightest.label} is lighter
+        (${f(lightest.d.e.mass,1)} kg vs ${f(best.d.e.mass,1)} kg) but scores
+        ${f(lightest.d.total,3)} against ${f(best.d.total,3)}. Read across the row to see which term decides it —
+        at w<sub>M</sub> = ${f(wM,2)} the deflection term carries ${f((1-wM)*100,0)}% of the weight.</p>`;
+    }
+    el.innerHTML=html;
+  }
+
+  /* ─── (3) FEASIBILITY TELEMETRY ──────────────────────────────────────── */
+  let TEL=null, telTimer=null;
+  function telStart(){
+    TEL={t0:Date.now(),samples:[],peakIter:0};
+    if(telTimer) clearInterval(telTimer);
+    const grab=()=>{
+      const it=/iter\s*(\d+)/.exec((($$('oIter')||{}).textContent)||'');
+      const rj=/rejected-invalid\s*(\d+)/.exec((($$('oInval')||{}).textContent)||'');
+      const ac=/accept\s*(\d+(?:\.\d+)?)\s*%/.exec((($$('oAcc')||{}).textContent)||'');
+      return {iter:it?+it[1]:null, rejected:rj?+rj[1]:null, accept:ac?+ac[1]:null};
+    };
+    telTimer=setInterval(()=>{
+      const g=grab();
+      if(g.iter!==null&&g.iter>=TEL.peakIter){
+        TEL.peakIter=g.iter;
+        TEL.samples.push({t:(Date.now()-TEL.t0)/1000, iter:g.iter, rejected:g.rejected, accept:g.accept});
+      }
+      if(!opt.busy){
+        const g2=grab();
+        if(g2.iter!==null) TEL.samples.push({t:(Date.now()-TEL.t0)/1000, iter:g2.iter,
+          rejected:g2.rejected, accept:g2.accept, final:true});
+        clearInterval(telTimer); telTimer=null; renderTelemetry();
+      }
+    },250);
+  }
+  function renderTelemetry(){
+    const el=$$('bxTelOut'); if(!el) return;
+    if(!TEL||!TEL.samples.length){el.innerHTML='<p class="verify-msg">Run the free-form optimizer (③) to record where its budget went.</p>';return;}
+    const withRej=TEL.samples.filter(s2=>s2.rejected!==null);
+    const last=withRej.length?withRej[withRej.length-1]:TEL.samples[TEL.samples.length-1];
+    const rejFrac=(last.rejected!==null&&last.iter)?(last.rejected/last.iter*100):null;
+    const c=$$('bxTelCanvas');
+    if(c&&c.getContext){
+      const g=c.getContext('2d'), W=c.width, H=c.height;
+      g.clearRect(0,0,W,H);
+      const pts=TEL.samples.filter(s=>s.rejected!==null&&s.iter>0);
+      if(pts.length>1){
+        const maxI=pts[pts.length-1].iter;
+        g.strokeStyle='#A8322D'; g.lineWidth=2; g.beginPath();
+        pts.forEach((s,i)=>{const x=8+(W-16)*s.iter/maxI, y=H-8-(H-16)*Math.min(1,s.rejected/s.iter);
+          i?g.lineTo(x,y):g.moveTo(x,y);});
+        g.stroke();
+        g.strokeStyle='#4C7A98'; g.lineWidth=1.5; g.beginPath();
+        pts.forEach((s,i)=>{const x=8+(W-16)*s.iter/maxI, y=H-8-(H-16)*Math.min(1,(s.accept||0)/100);
+          i?g.lineTo(x,y):g.moveTo(x,y);});
+        g.stroke();
+        g.strokeStyle='#CBD5DC'; g.lineWidth=1; g.strokeRect(8,8,W-16,H-16);
+        g.fillStyle='#8A9199'; g.font='10px sans-serif';
+        g.fillText('iterations →',10,H-2); g.fillText('1.0',W-24,14); g.fillText('0',W-16,H-12);
+      }
+    }
+    el.innerHTML=`<div class="row"><label>Iterations</label><span class="val">${last.iter}</span></div>`+
+      (last.rejected!==null?`<div class="row"><label>Rejected as invalid</label><span class="val"><b>${last.rejected}</b>${rejFrac!==null?' — '+f(rejFrac,1)+'% of the budget':''}</span></div>`:'')+
+      (last.accept!==null?`<div class="row"><label>Acceptance rate</label><span class="val">${last.accept}%</span></div>`:'')+
+      `<p class="note" style="margin-top:6px">Red: fraction of candidates rejected for geometric invalidity before their
+      mechanics were ever evaluated. Blue: acceptance rate among the survivors. A high red line means the search spent
+      its budget discovering which shapes are legal — which is exactly what a parametric family answers by construction.</p>`;
+  }
+
+  /* ─── (2) FORMULATION DUEL ───────────────────────────────────────────── */
+  let DUEL=null;
+  function duelCapture(){
+    const cfg=mkCfg(), opts=optOpts(), norm=normFor(cfg,opts);
+    if(!norm){alert('Draw a section first.');return;}
+    const own=decompose(state.contours,cfg,opts,norm,null);
+    const ff=(opt.best&&opt.best.length)?decompose(opt.best,cfg,opts,norm,null):null;
+    let win=null;
+    if(ds.bestC&&ds.family){
+      const proc=ds.process||FAMS[ds.family].compat[0];
+      const rub=ds.best?P_rubric(ds.family,proc,ds.best,cfg.mat):null;
+      const d=decompose(ds.bestC,cfg,opts,norm,rub);
+      if(d) win={label:FAMS[ds.family].label,d,
+        cost:ds.best?P_cost(ds.family,proc,ds.best,d.e.mass,cfg.L,cfg.mat,ds.qty||1):null};
+    }
+    DUEL={when:new Date().toISOString(),wM:opts.wM,seed:opts.seed,iters:opts.iters,
+      fosT:opts.fosT,tmin:opts.tmin,env:opts.env,defOn:opts.defOn,defR:opts.defR,
+      mat:cfg.mat.name,L:cfg.L,sup:beam.sup,own,ff,win,
+      tel:TEL?TEL.samples[TEL.samples.length-1]:null};
+    renderDuel();
+  }
+  function renderDuel(){
+    const el=$$('bxDuelOut'); if(!el) return;
+    if(!DUEL){el.innerHTML='<p class="verify-msg">Run the free-form optimizer (③), then the tournament (④), then press Capture.</p>';return;}
+    const D=DUEL;
+    let html='';
+    if(!D.ff) html+='<p class="verify-msg" style="color:var(--bad,#A8322D)">No free-form result recorded — run ③ first.</p>';
+    if(!D.win) html+='<p class="verify-msg" style="color:var(--bad,#A8322D)">No constrained winner recorded — run ④ first.</p>';
+    html+=`<table class="tbl" style="width:100%;font-size:11.5px"><thead><tr>
+      <th style="text-align:left">Formulation</th><th style="text-align:right">mass</th>
+      <th style="text-align:right">δ</th><th style="text-align:right">objective</th></tr></thead><tbody>`;
+    const row=(lab,d)=>d?`<tr><td>${lab}</td><td style="text-align:right">${f(d.e.mass,1)} kg</td>`+
+      `<td style="text-align:right">${f(d.e.dmm,2)} mm</td><td style="text-align:right">${f(d.total,3)}</td></tr>`:'';
+    html+=row('Your sketch',D.own)+row('Free-form (vertex annealing)',D.ff)+
+          (D.win?row('Constrained ('+D.win.label+')',D.win.d):'');
+    html+='</tbody></table>';
+    if(D.ff&&D.win){
+      const dm=(1-D.win.d.e.mass/D.ff.e.mass)*100;
+      const dobj=(1-D.win.d.total/D.ff.total)*100;
+      const lighter=dm>0, objBetter=dobj>0;
+      html+=`<p class="note" style="margin-top:8px;border-left:3px solid currentColor;padding-left:8px">
+        On <b>mass</b> the constrained search is <b>${f(Math.abs(dm),1)}% ${lighter?'lighter':'heavier'}</b>
+        (${f(D.win.d.e.mass,1)} vs ${f(D.ff.e.mass,1)} kg).
+        On the <b>composite objective</b> it is ${f(Math.abs(dobj),1)}% ${objBetter?'better':'worse'}
+        (${f(D.win.d.total,3)} vs ${f(D.ff.total,3)}).</p>`;
+      if(lighter&&!objBetter){
+        html+=`<p class="note" style="border-left:3px solid #D9880B;padding-left:8px">
+          <b>These two verdicts disagree, and that is the lesson.</b> The constrained design is much lighter but less
+          stiff (${f(D.win.d.e.dmm,2)} vs ${f(D.ff.e.dmm,2)} mm), so the composite — which at
+          w<sub>M</sub> = ${f(D.wM,2)} still carries ${f((1-D.wM)*100,0)}% deflection — slightly prefers the free-form
+          result. Neither search "won". They landed on different points of the same mass–stiffness trade-off, and which
+          one is better is a question about your objective, not about your optimiser.</p>`;
+      } else if(lighter&&objBetter){
+        html+=`<p class="note">The free-form search space strictly contains every parametric candidate, so in principle
+          it cannot be beaten by one — on both measures here, it was.</p>`;
+      }
+      if(D.tel&&D.tel.rejected!==null&&D.tel.iter){
+        html+=`<p class="note">Why: the annealer rejected <b>${D.tel.rejected}</b> of ${D.tel.iter} candidates
+          (${f(D.tel.rejected/D.tel.iter*100,0)}%) as geometrically invalid before evaluating their mechanics.
+          Every parametric candidate is valid by construction.</p>`;
+      }
+    }
+    html+=`<p class="note" style="margin-top:6px;opacity:.75">Seed ${D.seed} · ${D.iters} iterations ·
+      w<sub>M</sub> ${f(D.wM,2)} · FoS ≥ ${D.fosT} · t<sub>min</sub> ${D.tmin} mm · envelope ${D.env}× ·
+      ${D.defOn?'δ ≤ L/'+D.defR:'no deflection limit'} · ${D.mat} · L ${f(D.L,2)} m · ${D.sup}</p>`;
+    el.innerHTML=html;
+  }
+  function duelCsv(){
+    if(!DUEL){alert('Capture the duel first.');return;}
+    const D=DUEL, L=[];
+    L.push('field,value');
+    const put=(k,v)=>L.push(k+','+(typeof v==='string'?'"'+v.replace(/"/g,"'")+'"':v));
+    put('captured',D.when); put('seed',D.seed); put('iterations',D.iters); put('wM',D.wM.toFixed(2));
+    put('fos_target',D.fosT); put('t_min_mm',D.tmin); put('envelope',D.env);
+    put('deflection_limit',D.defOn?('L/'+D.defR):'none'); put('material',D.mat);
+    put('span_m',D.L); put('supports',D.sup);
+    if(D.own){put('sketch_mass_kg',D.own.e.mass.toFixed(3));put('sketch_defl_mm',D.own.e.dmm.toFixed(3));put('sketch_obj',D.own.total.toFixed(4));}
+    if(D.ff){put('freeform_mass_kg',D.ff.e.mass.toFixed(3));put('freeform_defl_mm',D.ff.e.dmm.toFixed(3));put('freeform_obj',D.ff.total.toFixed(4));}
+    if(D.win){put('constrained_family',D.win.label);put('constrained_mass_kg',D.win.d.e.mass.toFixed(3));
+      put('constrained_defl_mm',D.win.d.e.dmm.toFixed(3));put('constrained_obj',D.win.d.total.toFixed(4));
+      if(D.win.cost!==null&&D.win.cost!==undefined)put('constrained_cost',D.win.cost.toFixed(2));}
+    if(D.ff&&D.win) put('improvement_percent',((1-D.win.d.e.mass/D.ff.e.mass)*100).toFixed(2));
+    if(D.tel){put('rejected_invalid',D.tel.rejected);put('iterations_reached',D.tel.iter);
+      put('acceptance_percent',D.tel.accept);}
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([L.join('\n')],{type:'text/csv'}));
+    a.download='formulation-duel.csv'; document.body.appendChild(a); a.click(); a.remove();
+  }
+  function recipe(){
+    const cfg=mkCfg(), o=optOpts();
+    const txt=['BEAM STUDIO — REPRODUCTION RECIPE',
+      'span L = '+cfg.L+' m, supports '+beam.sup+' (xA '+beam.xA+', xB '+beam.xB+')',
+      'material = '+cfg.mat.name+', self-weight '+(cfg.self?'on':'off'),
+      'point loads = '+JSON.stringify(cfg.loads),
+      'udl = '+JSON.stringify(cfg.udl),
+      'triangular = '+JSON.stringify(cfg.tris),
+      'moments = '+JSON.stringify(cfg.moms),
+      'objective slider = '+$$('oW').value+'  (wM = '+o.wM.toFixed(2)+')',
+      'FoS target = '+o.fosT+', min thickness = '+o.tmin+' mm, envelope = '+o.env+'×',
+      'deflection limit = '+(o.defOn?('L/'+o.defR):'off'),
+      'iterations = '+o.iters+', seed = '+o.seed,
+      'design studio material = '+(MATS[ds.mat]?MATS[ds.mat].name:ds.mat)+', qty = '+(ds.qty||1)
+    ].join('\n');
+    navigator.clipboard&&navigator.clipboard.writeText(txt);
+    const el=$$('bxRecipeOut'); if(el) el.innerHTML='<pre style="white-space:pre-wrap;font-size:11px;margin:6px 0">'+
+      txt.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))+'</pre>'+
+      '<p class="note">Copied to the clipboard.</p>';
+  }
+
+  /* ─── UI INJECTION (additive) ────────────────────────────────────────── */
+  function panelAfter(anchorId,html){
+    const a=$$(anchorId); if(!a) return null;
+    const host=a.closest('.card,.panel,section,div');
+    const d=document.createElement('div');
+    d.className=(host&&host.className)||'card';
+    d.innerHTML=html;
+    host.parentNode.insertBefore(d,host.nextSibling);
+    return d;
+  }
+  function boot(){
+    if($$('bxObjOut')) return;
+    panelAfter('dsBinds',
+      `<h2>Objective inspector</h2><div id="bxObjOut"></div>
+       <div style="margin-top:8px"><button class="go" id="bxObjRun" style="padding:4px 10px">Recompute</button></div>`);
+    panelAfter('oScore',
+      `<h2>Where the search budget went</h2>
+       <canvas id="bxTelCanvas" width="360" height="120" style="width:100%;max-width:360px;height:120px"></canvas>
+       <div id="bxTelOut"></div>`);
+    panelAfter('bxTelOut',
+      `<h2>Formulation duel</h2>
+       <p class="note">Records the free-form optimum and the constrained winner as one paired result under identical
+       loading, objective and seed — the comparison the two searches exist to support.</p>
+       <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+         <button class="go" id="bxDuelCap" style="padding:4px 10px">Capture duel</button>
+         <button class="go" id="bxDuelCsv" style="padding:4px 10px">Duel (CSV)</button>
+         <button class="go" id="bxRecipe" style="padding:4px 10px">Reproduction recipe</button>
+       </div>
+       <div id="bxDuelOut"></div><div id="bxRecipeOut"></div>`);
+    // beam verification: attach next to the beam tab's results if present
+    const bt=$$('bDiagWrap')||$$('bRes')||$$('bSelfVal');
+    if(bt){
+      const host=bt.closest('.card,.panel,section,div');
+      const d=document.createElement('div');
+      d.className=(host&&host.className)||'card';
+      d.innerHTML='<h2>Solver verification vs closed form</h2><div id="bxVerifyOut"></div>'+
+        '<div style="margin-top:8px"><button class="go" id="bxVerifyRun" style="padding:4px 10px">Re-check</button></div>';
+      host.parentNode.insertBefore(d,host.nextSibling);
+    }
+    if($$('bxObjRun')) $$('bxObjRun').onclick=renderObjective;
+    if($$('bxDuelCap')) $$('bxDuelCap').onclick=duelCapture;
+    if($$('bxDuelCsv')) $$('bxDuelCsv').onclick=duelCsv;
+    if($$('bxRecipe')) $$('bxRecipe').onclick=recipe;
+    if($$('bxVerifyRun')) $$('bxVerifyRun').onclick=renderVerify;
+    const os=$$('oStart'); if(os) os.addEventListener('click',()=>setTimeout(telStart,120));
+    const dst=$$('dsStart'); if(dst) dst.addEventListener('click',()=>setTimeout(()=>{
+      const iv=setInterval(()=>{ if(!ds.busy&&!opt.dsBusy){clearInterval(iv);renderObjective();} },400);
+      setTimeout(()=>clearInterval(iv),120000);
+    },200));
+    renderTelemetry(); renderDuel(); renderVerify(); renderObjective();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+  else setTimeout(boot,0);
+  return {renderObjective,renderVerify,renderTelemetry,duelCapture,recipe,
+          verifyBeam,last:()=>DUEL,version:'bx-1.0'};
+})();
+globalThis.__beamExt = BX;
+
 </script>
 </body>
 </html>

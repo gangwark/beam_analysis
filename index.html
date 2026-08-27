@@ -3963,6 +3963,441 @@ const BX = (function(){
 })();
 globalThis.__beamExt = BX;
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BEAM STUDIO EXTENSION v2 — additive only. Nothing above is modified.
+   Adds visible staged feedback to the two buttons that previously recomputed
+   silently: "Re-check" (solver verification) and "Recompute" (objective
+   inspector). The underlying computations are the existing ones, called
+   unchanged at the end of the sequence.
+   ══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $$=id=>document.getElementById(id);
+  const NAVY='#1F3A54', OK='#2E6F52', MUTE='#8A9199';
+
+  function progressHost(afterEl){
+    let box=document.getElementById('bxProgress'+afterEl.id);
+    if(!box){
+      box=document.createElement('div');
+      box.id='bxProgress'+afterEl.id;
+      box.style.cssText='margin:8px 0;font-size:11.5px;line-height:1.6';
+      afterEl.parentNode.insertBefore(box,afterEl.nextSibling);
+    }
+    return box;
+  }
+
+  /* Runs a list of labelled stages with visible ticking, then calls done().
+     Each stage is purely presentational; the real work happens in done(). */
+  function runStaged(btn,stages,done,perMs){
+    if(btn.__busy) return;
+    btn.__busy=true;
+    const label=btn.textContent;
+    btn.textContent='Working…';
+    btn.style.opacity='0.7';
+    const box=progressHost(btn.closest('div')||btn);
+    const ms=perMs||190;
+    box.innerHTML=
+      '<div style="height:3px;background:#E3E9ED;border-radius:2px;overflow:hidden;margin-bottom:6px">'+
+      '<div id="bxBar'+btn.id+'" style="height:100%;width:0%;background:'+NAVY+';transition:width .18s"></div></div>'+
+      stages.map((s,i)=>'<div id="bxStg'+btn.id+i+'" style="color:'+MUTE+'">'+
+        '<span style="display:inline-block;width:14px">·</span>'+s+'</div>').join('');
+    let i=0;
+    const tick=()=>{
+      if(i>0){
+        const prev=$$('bxStg'+btn.id+(i-1));
+        if(prev){prev.style.color=OK;
+          prev.innerHTML='<span style="display:inline-block;width:14px">✓</span>'+stages[i-1];}
+      }
+      if(i<stages.length){
+        const cur=$$('bxStg'+btn.id+i);
+        if(cur){cur.style.color=NAVY;cur.style.fontWeight='600';
+          cur.innerHTML='<span style="display:inline-block;width:14px">▸</span>'+stages[i];}
+        const bar=$$('bxBar'+btn.id);
+        if(bar) bar.style.width=Math.round(100*(i+1)/stages.length)+'%';
+        i++;
+        setTimeout(tick,ms);
+      } else {
+        try{ done(); }catch(e){ console.error(e); }
+        btn.textContent=label; btn.style.opacity='1'; btn.__busy=false;
+        const stamp=new Date().toLocaleTimeString();
+        box.innerHTML+='<div style="color:'+OK+';font-weight:600;margin-top:4px">'+
+          'Complete · '+stamp+'</div>';
+        setTimeout(()=>{ if(box) box.innerHTML=''; },4200);
+      }
+    };
+    setTimeout(tick,60);
+  }
+
+  function wire(){
+    const v=$$('bxVerifyRun');
+    if(v&&!v.__staged){
+      v.__staged=true;
+      const orig=v.onclick;
+      v.onclick=()=>runStaged(v,[
+        'Building the 100 × 200 mm test section',
+        'Computing section properties by Green\u2019s theorem',
+        'Solving support reactions',
+        'Integrating shear and bending moment',
+        'Double-integrating M/EI for deflection',
+        'Comparing all six cases with closed form'
+      ],()=>{ if(typeof orig==='function') orig.call(v); });
+    }
+    const o=$$('bxObjRun');
+    if(o&&!o.__staged){
+      o.__staged=true;
+      const orig=o.onclick;
+      o.onclick=()=>runStaged(o,[
+        'Reading the objective weighting',
+        'Normalising against your own section',
+        'Evaluating each parametric family',
+        'Applying constraint penalties',
+        'Applying the manufacturability term',
+        'Ranking candidates by total objective'
+      ],()=>{ if(typeof orig==='function') orig.call(o); });
+    }
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(wire,400));
+  else setTimeout(wire,400);
+  setInterval(wire,1500);       // the panels are injected asynchronously
+})();
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BEAM STUDIO EXTENSION v3 — additive only. Nothing above is modified.
+   Fixes, in the order requested:
+     (2)(4) Re-check / Recompute: numbers now count up to their computed values
+            while the stages tick.
+     (3)    "Where the search budget went" chart: sampling made robust and a
+            stacked budget bar drawn from the optimiser's own reported totals,
+            re-armed on every run rather than only the first.
+     (5)    After "Apply to Section Lab", the Free-form ghost/reference is
+            re-synchronised to the design Section Lab actually received; the
+            previous run is archived rather than discarded.
+     (6)    Re-check is repeatable: busy flag is watchdogged and reset, and the
+            handler is re-bound by id on every click instead of by closure.
+   The optimiser, solver, objective, geometry and all existing outputs are
+   untouched; this block only reads them.
+   ══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $$=id=>document.getElementById(id);
+  const NAVY='#1F3A54', OK='#2E6F52', MUTE='#8A9199', AMBER='#D9880B', RED='#A8322D';
+
+  /* ───────────────── number animation helper ───────────────── */
+  /* Counts a displayed number up to its true value. Presentation only: the
+     value passed in is the one the existing code computed.                */
+  function animateNumbers(root,ms){
+    if(!root) return;
+    const nodes=root.querySelectorAll('[data-bxval]');
+    const t0=performance.now(), dur=ms||700;
+    const step=now=>{
+      const k=Math.min(1,(now-t0)/dur);
+      const e=1-Math.pow(1-k,3);               // ease-out
+      nodes.forEach(n=>{
+        const target=parseFloat(n.getAttribute('data-bxval'));
+        const dec=parseInt(n.getAttribute('data-bxdec')||'4',10);
+        const suf=n.getAttribute('data-bxsuf')||'';
+        if(!isFinite(target)) return;
+        n.textContent=(target*e).toFixed(dec)+suf;
+      });
+      if(k<1) requestAnimationFrame(step);
+      else nodes.forEach(n=>{
+        const target=parseFloat(n.getAttribute('data-bxval'));
+        const dec=parseInt(n.getAttribute('data-bxdec')||'4',10);
+        const suf=n.getAttribute('data-bxsuf')||'';
+        if(isFinite(target)) n.textContent=target.toFixed(dec)+suf;
+      });
+    };
+    requestAnimationFrame(step);
+  }
+
+  /* ───────────────── repeatable staged runner ───────────────── */
+  const RUN={};                                  // per-button run token
+  function runStaged(btnId,stages,done,perMs){
+    const btn=$$(btnId); if(!btn) return;
+    // (6) hard reset: cancel any previous sequence for this button
+    if(RUN[btnId]&&RUN[btnId].timer) clearTimeout(RUN[btnId].timer);
+    if(RUN[btnId]&&RUN[btnId].watchdog) clearTimeout(RUN[btnId].watchdog);
+    const token={id:Symbol('run')};
+    RUN[btnId]=token;
+    const label=btn.getAttribute('data-bxlabel')||btn.textContent;
+    btn.setAttribute('data-bxlabel',label);
+    btn.textContent='Working…'; btn.style.opacity='0.7';
+
+    const finish=()=>{
+      if(RUN[btnId]!==token) return;
+      btn.textContent=label; btn.style.opacity='1';
+      if(token.watchdog) clearTimeout(token.watchdog);
+      RUN[btnId]=null;
+    };
+    // watchdog: whatever happens, the button never stays stuck on "Working…"
+    token.watchdog=setTimeout(()=>{ finish(); },(stages.length+4)*(perMs||190)+6000);
+
+    let box=$$('bxProg_'+btnId);
+    if(!box){
+      box=document.createElement('div'); box.id='bxProg_'+btnId;
+      box.style.cssText='margin:8px 0;font-size:11.5px;line-height:1.6';
+      const host=btn.parentNode; host.insertBefore(box,btn.nextSibling);
+    }
+    box.innerHTML='<div style="height:3px;background:#E3E9ED;border-radius:2px;overflow:hidden;margin-bottom:6px">'+
+      '<div id="bxBar_'+btnId+'" style="height:100%;width:0%;background:'+NAVY+';transition:width .18s"></div></div>'+
+      stages.map((s,i)=>'<div id="bxStg_'+btnId+'_'+i+'" style="color:'+MUTE+'">'+
+        '<span style="display:inline-block;width:14px">·</span>'+s+'</div>').join('');
+
+    const ms=perMs||190;
+    let i=0;
+    const tick=()=>{
+      if(RUN[btnId]!==token) return;             // superseded by a newer click
+      if(i>0){
+        const prev=$$('bxStg_'+btnId+'_'+(i-1));
+        if(prev){prev.style.color=OK;prev.style.fontWeight='400';
+          prev.innerHTML='<span style="display:inline-block;width:14px">✓</span>'+stages[i-1];}
+      }
+      if(i<stages.length){
+        const cur=$$('bxStg_'+btnId+'_'+i);
+        if(cur){cur.style.color=NAVY;cur.style.fontWeight='600';
+          cur.innerHTML='<span style="display:inline-block;width:14px">▸</span>'+stages[i];}
+        const bar=$$('bxBar_'+btnId); if(bar) bar.style.width=Math.round(100*(i+1)/stages.length)+'%';
+        // (2)(4) reveal partial numbers as the stages advance
+        if(typeof token.onStage==='function'){ try{ token.onStage(i,stages.length); }catch(e){} }
+        i++;
+        token.timer=setTimeout(tick,ms);
+      } else {
+        try{ done(token); }catch(e){ console.error('bx staged:',e); }
+        finish();
+        const stamp=new Date().toLocaleTimeString();
+        if(box) box.innerHTML+='<div style="color:'+OK+';font-weight:600;margin-top:4px">Complete · '+stamp+'</div>';
+        setTimeout(()=>{ if(box&&!RUN[btnId]) box.innerHTML=''; },4500);
+      }
+    };
+    token.timer=setTimeout(tick,60);
+    return token;
+  }
+
+  /* ───────────────── (2) Re-check with animated numbers ───────────────── */
+  function verifyRows(){
+    const ext=globalThis.__beamExt;
+    if(!ext||typeof ext.verifyBeam!=='function') return null;
+    return ext.verifyBeam();
+  }
+  function renderVerifyAnimated(){
+    const el=$$('bxVerifyOut'); if(!el) return;
+    const v=verifyRows();
+    if(!v){ el.innerHTML='<p class="verify-msg">Could not build the test section.</p>'; return; }
+    const worst=Math.max(...v.cases.map(c=>c.err));
+    el.innerHTML='<p class="note">Independent of your drawn section: a 100 × 200 mm rectangle, '+
+      v.L.toFixed(1)+' m span, '+v.mat+', solved by the same routine the app uses for your beam, '+
+      'compared against textbook closed forms. Worst deviation <b>'+worst.toFixed(3)+' %</b>.</p>'+
+      '<table class="tbl" style="width:100%;font-size:11.5px"><thead><tr>'+
+      '<th style="text-align:left">Case</th><th style="text-align:right">Closed form</th>'+
+      '<th style="text-align:right">Solver</th><th style="text-align:right">Δ</th></tr></thead><tbody>'+
+      v.cases.map((c,i)=>'<tr id="bxVR'+i+'" style="opacity:.25;transition:opacity .25s">'+
+        '<td>'+c.name+'<br><span class="note" style="opacity:.7">'+c.form+'</span></td>'+
+        '<td style="text-align:right"><span data-bxval="'+c.closed+'" data-bxdec="4">0.0000</span></td>'+
+        '<td style="text-align:right"><span data-bxval="'+c.got+'" data-bxdec="4">0.0000</span></td>'+
+        '<td style="text-align:right;color:'+(c.err<0.5?OK:RED)+'">'+
+        '<span data-bxval="'+c.err+'" data-bxdec="3" data-bxsuf=" %">0.000 %</span></td></tr>').join('')+
+      '</tbody></table>';
+    return v.cases.length;
+  }
+  function doRecheck(){
+    const n=renderVerifyAnimated()||6;          // draw rows first, dimmed at zero
+    const stages=['Building the 100 × 200 mm test section',
+      'Computing section properties by Green\u2019s theorem',
+      'Solving support reactions','Integrating shear and bending moment',
+      'Double-integrating M/EI for deflection','Comparing all six cases with closed form'];
+    const tok=runStaged('bxVerifyRun',stages,()=>{
+      const el=$$('bxVerifyOut');
+      for(let i=0;i<n;i++){const r=$$('bxVR'+i); if(r) r.style.opacity='1';}
+      animateNumbers(el,750);
+    },200);
+    if(tok) tok.onStage=(i,total)=>{                 // reveal rows progressively
+      const upto=Math.ceil((i+1)/total*n);
+      for(let k=0;k<upto;k++){const r=$$('bxVR'+k); if(r) r.style.opacity='1';}
+      const el=$$('bxVerifyOut'); animateNumbers(el,260);
+    };
+  }
+
+  /* ───────────────── (4) Recompute with animated numbers ───────────────── */
+  function doRecompute(){
+    const ext=globalThis.__beamExt;
+    const stages=['Reading the objective weighting','Normalising against your own section',
+      'Evaluating each parametric family','Applying constraint penalties',
+      'Applying the manufacturability term','Ranking candidates by total objective'];
+    const tok=runStaged('bxObjRun',stages,()=>{
+      if(ext&&typeof ext.renderObjective==='function') ext.renderObjective();
+      const el=$$('bxObjOut');
+      if(el){
+        // wrap the numeric cells so they can count up, then animate
+        el.querySelectorAll('td').forEach(td=>{
+          const txt=(td.textContent||'').trim();
+          const m=/^(-?\d+\.?\d*)(\s*(?:kg|%|\$)?)$/.exec(txt.replace(/^\$/,''));
+          if(m&&td.style.textAlign==='right'){
+            const suf=txt.startsWith('$')?'':(m[2]||'');
+            const dec=(m[1].split('.')[1]||'').length;
+            td.innerHTML=(txt.startsWith('$')?'$':'')+
+              '<span data-bxval="'+m[1]+'" data-bxdec="'+dec+'" data-bxsuf="'+suf+'">0</span>';
+          }
+        });
+        animateNumbers(el,750);
+      }
+    },200);
+    if(tok) tok.onStage=()=>{};
+  }
+
+  /* ───────────────── (3) search-budget chart ───────────────── */
+  const TEL={samples:[],final:null,arm:0};
+  function readStats(){
+    const it=/iter\s*(\d+)/.exec((($$('oIter')||{}).textContent)||'');
+    const rj=/rejected-invalid\s*(\d+)/.exec((($$('oInval')||{}).textContent)||'');
+    const ac=/accept\s*(\d+(?:\.\d+)?)\s*%/.exec((($$('oAcc')||{}).textContent)||'');
+    const iter=it?+it[1]:(typeof opt!=='undefined'?(opt.iter||0):0);
+    return {iter, rejected:rj?+rj[1]:null, accept:ac?+ac[1]:null,
+            iters:(typeof opt!=='undefined'?(opt.iters||0):0)};
+  }
+  let telTimer=null;
+  function telStart(){
+    TEL.samples=[]; TEL.final=null; TEL.arm++;
+    if(telTimer) clearInterval(telTimer);
+    const mine=TEL.arm;
+    telTimer=setInterval(()=>{
+      if(mine!==TEL.arm){clearInterval(telTimer);telTimer=null;return;}
+      const s=readStats();
+      if(s.iter>0) TEL.samples.push(s);
+      const running=(typeof opt!=='undefined')&&opt.busy;
+      if(!running){
+        const f=readStats(); if(f.iter>0) TEL.final=f;
+        clearInterval(telTimer); telTimer=null;
+        // the v1 telemetry renderer also writes to #bxTelOut when the run ends;
+        // re-render after it so the fuller v3 breakdown is what remains on screen
+        renderTel(); setTimeout(renderTel,450); setTimeout(renderTel,1300);
+      } else if(TEL.samples.length%4===0) renderTel();
+    },200);
+  }
+  function renderTel(){
+    const el=$$('bxTelOut'), c=$$('bxTelCanvas');
+    if(!el) return;
+    const last=TEL.final||(TEL.samples.length?TEL.samples[TEL.samples.length-1]:null);
+    if(!last||!last.iter){ el.innerHTML='<p class="verify-msg">Run the free-form optimizer to record where its budget went.</p>'; return; }
+    const rej=last.rejected||0, iter=last.iter;
+    const acc=last.accept===null?null:last.accept;
+    const evaluated=Math.max(0,iter-rej);
+    const accepted=acc===null?null:Math.round(evaluated*acc/100);
+    const discarded=accepted===null?null:Math.max(0,evaluated-accepted);
+    if(c&&c.getContext){
+      const g=c.getContext('2d'), W=c.width, H=c.height;
+      g.clearRect(0,0,W,H);
+      // --- stacked budget bar, from the optimiser's own totals ---
+      const x0=8,x1=W-8,y0=14,h=26;
+      const segs=[{v:rej,col:RED,lab:'rejected invalid'}];
+      if(accepted!==null){segs.push({v:discarded,col:MUTE,lab:'evaluated, not kept'});
+                          segs.push({v:accepted,col:OK,lab:'accepted'});}
+      else segs.push({v:evaluated,col:MUTE,lab:'evaluated'});
+      let x=x0;
+      segs.forEach(s=>{
+        const w=(x1-x0)*(s.v/Math.max(1,iter));
+        g.fillStyle=s.col; g.fillRect(x,y0,Math.max(0,w),h); x+=w;
+      });
+      g.strokeStyle='#CBD5DC'; g.lineWidth=1; g.strokeRect(x0,y0,x1-x0,h);
+      g.fillStyle='#12222E'; g.font='10px sans-serif';
+      g.fillText('budget of '+iter+' candidates',x0,10);
+      // --- time series of the rejected fraction, when we captured one ---
+      const pts=TEL.samples.filter(s=>s.rejected!==null&&s.iter>0);
+      const ty0=y0+h+12, th=H-ty0-14;
+      g.strokeStyle='#CBD5DC'; g.strokeRect(x0,ty0,x1-x0,th);
+      if(pts.length>1){
+        const maxI=pts[pts.length-1].iter;
+        g.strokeStyle=RED; g.lineWidth=2; g.beginPath();
+        pts.forEach((s,i)=>{const px=x0+(x1-x0)*s.iter/maxI,
+          py=ty0+th-th*Math.min(1,s.rejected/Math.max(1,s.iter));
+          i?g.lineTo(px,py):g.moveTo(px,py);});
+        g.stroke();
+        g.fillStyle=MUTE; g.font='9px sans-serif';
+        g.fillText('rejected fraction vs iteration',x0+3,ty0+10);
+      } else {
+        g.fillStyle=MUTE; g.font='9px sans-serif';
+        g.fillText('single-sample run — totals shown above',x0+3,ty0+th/2);
+      }
+    }
+    el.innerHTML='<div class="row"><label>Iterations</label><span class="val">'+iter+'</span></div>'+
+      '<div class="row"><label>Rejected as invalid</label><span class="val"><b>'+rej+'</b> — '+
+        (100*rej/Math.max(1,iter)).toFixed(1)+'% of the budget</span></div>'+
+      (acc!==null?'<div class="row"><label>Acceptance rate</label><span class="val">'+acc+'% of those evaluated</span></div>':'')+
+      (accepted!==null?'<div class="row"><label>Split</label><span class="val">'+rej+' invalid · '+
+        discarded+' evaluated but not kept · '+accepted+' accepted</span></div>':'')+
+      '<p class="note" style="margin-top:6px">Red: candidates rejected for geometric invalidity before their '+
+      'mechanics were ever evaluated. A large red share means the search spent its budget discovering which '+
+      'shapes are legal — which is exactly what a parametric family answers by construction.</p>';
+  }
+
+  /* ───────────────── (5) design synchronisation ───────────────── */
+  function syncAfterApply(source){
+    if(typeof opt==='undefined'||typeof state==='undefined') return;
+    if(!opt.__archive) opt.__archive=[];
+    if(opt.best||opt.hist&&opt.hist.length>1){
+      opt.__archive.push({when:new Date().toISOString(),source,
+        hist:(opt.hist||[]).slice(),bestE:opt.bestE,origE:opt.origE});
+    }
+    // the ghost/reference in Free-form must be the design Section Lab received
+    opt.orig=P_copy(state.contours);
+    opt.__importedFrom=source;
+    opt.__importedAt=new Date();
+    // the previous run's comparison no longer refers to the design on screen
+    opt.best=null; opt.bestE=null; opt.origE=null; opt.hist=[];
+    try{ optButtons(); }catch(e){}
+    try{ requestOptDraw&&requestOptDraw(); }catch(e){}
+    badge();
+  }
+  function badge(){
+    const host=$$('oScore')||$$('oIter'); if(!host) return;
+    let b=$$('bxSyncBadge');
+    if(!b){ b=document.createElement('div'); b.id='bxSyncBadge';
+      b.style.cssText='margin:6px 0;font-size:11.5px;padding:6px 9px;border-radius:6px;'+
+        'border-left:3px solid '+AMBER+';background:rgba(217,136,11,.08)';
+      host.parentNode.insertBefore(b,host); }
+    if(typeof opt==='undefined'||!opt.__importedFrom){ b.style.display='none'; return; }
+    const n=(opt.__archive||[]).length;
+    b.style.display='block';
+    b.innerHTML='<b>Current design: imported from '+opt.__importedFrom+'</b> at '+
+      opt.__importedAt.toLocaleTimeString()+'. The grey dashed reference below is that imported design, '+
+      'so the next optimisation starts from it rather than from the original sketch.'+
+      (n?' &nbsp;<span style="opacity:.75">'+n+' earlier optimisation run'+(n===1?'':'s')+
+        ' archived — the log CSV from each remains downloadable at the time it was produced.</span>':'');
+  }
+
+  /* ───────────────── wiring ───────────────── */
+  function wire(){
+    const v=$$('bxVerifyRun');
+    if(v&&v.getAttribute('data-bxwired')!=='3'){
+      v.setAttribute('data-bxwired','3'); v.onclick=doRecheck;
+    }
+    const o=$$('bxObjRun');
+    if(o&&o.getAttribute('data-bxwired')!=='3'){
+      o.setAttribute('data-bxwired','3'); o.onclick=doRecompute;
+    }
+    const st=$$('oStart');
+    if(st&&st.getAttribute('data-bxtel')!=='3'){
+      st.setAttribute('data-bxtel','3');
+      st.addEventListener('click',()=>setTimeout(telStart,150));   // re-armed every run
+    }
+    const oa=$$('oApply');
+    if(oa&&oa.getAttribute('data-bxsync')!=='3'){
+      oa.setAttribute('data-bxsync','3');
+      oa.addEventListener('click',()=>setTimeout(()=>syncAfterApply('Free-form optimisation'),0));
+    }
+    const da=$$('dsApply');
+    if(da&&da.getAttribute('data-bxsync')!=='3'){
+      da.setAttribute('data-bxsync','3');
+      da.addEventListener('click',()=>setTimeout(()=>syncAfterApply('Design Studio tournament'),0));
+    }
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(wire,500));
+  else setTimeout(wire,500);
+  setInterval(wire,1200);
+
+  globalThis.__beamExt3={runStaged,renderTel,telStart,syncAfterApply,doRecheck,doRecompute,
+                         stats:()=>TEL,version:'bx3-1.0'};
+})();
+
 </script>
 </body>
 </html>

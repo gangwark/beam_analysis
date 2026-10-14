@@ -4398,6 +4398,1239 @@ globalThis.__beamExt = BX;
                          stats:()=>TEL,version:'bx3-1.0'};
 })();
 
+
+/* ═════════════════════════════════════════════════════════════════════════
+   BX4 — UNIT SYSTEMS (SI ⇄ US customary) + CIRCLE TOOL          additive only
+   ─────────────────────────────────────────────────────────────────────────
+   • Every computation still runs in SI exactly as before (section mm,
+     beam m / kN, stress MPa). US customary is a presentation layer:
+       – numeric inputs display US values but hand SI to the existing code
+         (an instance-level `value` accessor on each field),
+       – readouts are converted on the way out (exact recomputation for the
+         Section Lab and Beam Lab panels and diagrams; a token converter for
+         the summary panels of tabs ③/④ and the extension panels).
+   • With the selector on SI nothing is altered: every wrapper falls straight
+     through to the original function.
+   • Circle tool: build a circular (or hollow circular) section from its
+     diameter or radius, verified against πr²/πr⁴/4, or cut a circular hole.
+   ═════════════════════════════════════════════════════════════════════════ */
+(function(){
+  const $=id=>document.getElementById(id);
+  const LS_KEY='beamStudio.units';
+
+  /* ---------- conversion constants (exact definitions) ---------- */
+  const IN_PER_MM=1/25.4, FT_PER_M=1/0.3048, LBF_PER_N=1/4.4482216152605;
+  const KIP_PER_KN=1000*LBF_PER_N/1000;            /* 0.224809 kip per kN   */
+  const LBF_PER_KN=1000*LBF_PER_N;                 /* 224.809 lbf per kN    */
+  const PSI_PER_MPA=1e6/(4.4482216152605/0.00064516); /* 145.0377 psi per MPa */
+  const KSI_PER_MPA=PSI_PER_MPA/1000;
+  const LB_PER_KG=1/0.45359237;
+  const PCF_PER_KGM3=(1/0.45359237)*Math.pow(0.3048,3);   /* lb/ft³ per kg/m³ */
+
+  let sys='SI';
+  /* end types for every support option: [A, B] */
+  const ENDS={pinroller:['Pin','Roller'],fixed:['Fixed','Free'],fixedroller:['Fixed','Roller'],
+    rollerpin:['Roller','Pin'],pinpin:['Pin','Pin'],rollerroller:['Roller','Roller'],
+    freefixed:['Free','Fixed'],rollerfixed:['Roller','Fixed'],pinfixed:['Pin','Fixed'],
+    fixedpin:['Fixed','Pin'],fixedfixed:['Fixed','Fixed']};
+  const NEWSUP={rollerpin:1,pinpin:1,rollerroller:1,freefixed:1,rollerfixed:1,pinfixed:1,fixedpin:1,fixedfixed:1};
+
+  const isUS=()=>sys!=='SI';
+  const kip=()=>sys==='USk';
+
+  /* SI display token → {f, u} for the active system */
+  function U(tok){
+    if(!isUS())return {f:1,u:tok};
+    const F=kip()?KIP_PER_KN:LBF_PER_KN, fu=kip()?'kip':'lbf';
+    switch(tok){
+      case 'mm':  return {f:IN_PER_MM,u:'in'};
+      case 'mm²': return {f:Math.pow(IN_PER_MM,2),u:'in²'};
+      case 'mm³': return {f:Math.pow(IN_PER_MM,3),u:'in³'};
+      case 'mm⁴': return {f:Math.pow(IN_PER_MM,4),u:'in⁴'};
+      case 'm':   return {f:FT_PER_M,u:'ft'};
+      case 'kN':  return {f:F,u:fu};
+      case 'kN/m':return {f:F/FT_PER_M,u:fu+'/ft'};
+      case 'kN·m':return {f:F*FT_PER_M,u:fu+'·ft'};
+      case 'MPa': return kip()?{f:KSI_PER_MPA,u:'ksi'}:{f:PSI_PER_MPA,u:'psi'};
+      case 'GPa': return kip()?{f:KSI_PER_MPA*1000,u:'ksi'}:{f:PSI_PER_MPA*1000,u:'psi'};
+      case 'kg':  return {f:LB_PER_KG,u:'lb'};
+      case 'kg/m³':return {f:PCF_PER_KGM3,u:'lb/ft³'};
+    }
+    return {f:1,u:tok};
+  }
+  const KIND_TOK={len_s:'mm',len_b:'m',force:'kN',dist:'kN/m',mom:'kN·m',mod:'GPa'};
+
+  /* ---------- number parsing / formatting ---------- */
+  const SUPD={'⁻':'-','⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9'};
+  const NUM='[−-]?\\d+(?:\\.\\d+)?(?:×10[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)?';
+  const UTOK='kg/m³|kN·m|kN/m|kN|MPa|GPa|mm⁴|mm³|mm²|mm|kg|m';
+  const RX_TEXT=new RegExp('(?<![\\w.])('+NUM+'(?:\\s*(?:/|,|×)\\s*'+NUM+')*)(\\s?)('+UTOK+')(?![A-Za-z0-9²³⁴·/])','g');
+  const RX_NUMG=new RegExp(NUM,'g');
+  const RX_PAREN=new RegExp('\\(('+UTOK+')\\)','g');
+  const RX_ONLYNUM=new RegExp('^\\s*('+NUM+')\\s*$');
+  const RX_TRAIL=new RegExp('('+NUM+'(?:\\s*(?:/|,|×)\\s*'+NUM+')*)(\\s*)$');
+  const RX_UNITONLY=new RegExp('^('+UTOK+')$');
+  function parseNum(s){
+    s=s.replace('−','-');
+    const k=s.indexOf('×10');
+    if(k<0)return parseFloat(s);
+    const ex=s.slice(k+3).split('').map(c=>SUPD[c]||'').join('');
+    return parseFloat(s.slice(0,k))*Math.pow(10,parseInt(ex,10));
+  }
+  function sigOf(s){
+    const m=s.replace('−','-').split('×')[0].replace(/[-+.]/g,'').replace(/^0+/,'');
+    return Math.min(6,Math.max(3,m.length||1));
+  }
+  function supNum2(n){return String(n).split('').map(c=>({'-':'⁻','0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'}[c]||c)).join('');}
+  function fmtG(x,sig){
+    if(!isFinite(x))return '—';
+    if(x===0)return '0';
+    const ax=Math.abs(x);
+    if(ax>=1e6||ax<1e-3){
+      const e=Math.floor(Math.log10(ax)/3)*3,m=x/Math.pow(10,e);
+      const d=Math.max(0,sig-1-Math.floor(Math.log10(Math.abs(m))));
+      return m.toFixed(d)+'×10'+supNum2(e);
+    }
+    const d=Math.max(0,sig-1-Math.floor(Math.log10(ax)));
+    return x.toFixed(Math.min(d,8));
+  }
+  /* engineering formatter for exact US readouts: ~4 significant figures */
+  function f4(x){return Math.abs(x)<1e-9?'0':fmtG(x,4);}   /* solver round-off (~1e-16) reads as 0, as toFixed did */
+
+  /* ---------- text conversion (summary panels, generic canvases) ---------- */
+  function convertText(s){
+    if(!s||!isUS())return null;
+    let changed=false;
+    let out=s.replace(RX_TEXT,(all,nums,sp,tok)=>{
+      const c=U(tok);changed=true;
+      return nums.replace(RX_NUMG,n=>fmtG(parseNum(n)*c.f,sigOf(n)))+sp+c.u;
+    });
+    out=out.replace(RX_PAREN,(a,t)=>{changed=true;return '('+U(t).u+')';});
+    return changed?out:null;
+  }
+
+  /* ---------- DOM records so SI can be restored exactly ---------- */
+  const recs=new WeakMap(), live=new Set();
+  function setText(node,txt){
+    let rec=recs.get(node);
+    if(!rec||node.data!==rec.us)rec={si:node.data,us:txt};
+    else rec.us=txt;
+    recs.set(node,rec);live.add(node);
+    if(node.data!==txt)node.data=txt;
+  }
+  function wasMine(node){const r=recs.get(node);return !!(r&&node.data===r.us);}
+  function restoreAll(){
+    for(const n of live){
+      const r=recs.get(n);
+      if(r&&n.isConnected&&n.data===r.us)n.data=r.si;
+    }
+    live.clear();
+  }
+  const SKIP_TAGS={SCRIPT:1,STYLE:1,OPTION:1,SELECT:1,TEXTAREA:1,INPUT:1,BUTTON:0};
+  function skipped(el){
+    if(!el||el.nodeType!==1)return true;
+    if(SKIP_TAGS[el.tagName])return true;
+    return !!el.closest('[data-ux-skip],#bxVerifyOut');
+  }
+  function convertTextNode(t){
+    if(wasMine(t))return;
+    const c=convertText(t.data);
+    if(c!==null)setText(t,c);
+  }
+  function convertCell(td,tok){
+    const c=U(tok);
+    const w=document.createTreeWalker(td,NodeFilter.SHOW_TEXT);
+    let t;
+    while((t=w.nextNode())){
+      if(wasMine(t))return;
+      const m=RX_ONLYNUM.exec(t.data);
+      if(m){setText(t,t.data.replace(m[1],fmtG(parseNum(m[1])*c.f,sigOf(m[1]))));return;}
+      if(t.data.trim())return;
+    }
+  }
+  function processTable(tbl){
+    if(skipped(tbl))return;
+    const rows=Array.from(tbl.rows||[]);
+    let colTok=[];
+    for(const tr of rows){
+      const cells=Array.from(tr.cells);
+      if(cells.length&&cells.every(c=>c.tagName==='TH')){
+        colTok=cells.map(th=>{
+          if(th.dataset.uxTok)return th.dataset.uxTok;
+          const t=th.firstChild;
+          if(!t||t.nodeType!==3||th.childNodes.length!==1)return null;
+          const tx=t.data.trim();
+          const m=tx.length<=12?new RegExp('^([^\\d\\s]{1,3}\\s)?('+UTOK+')$').exec(tx):null;
+          if(!m)return null;
+          th.dataset.uxTok=m[2];
+          setText(t,t.data.replace(new RegExp(m[2].replace('/','\\/')+'\\s*$'),U(m[2]).u));
+          return m[2];
+        });
+        continue;
+      }
+      let rowTok=null;
+      const first=cells[0];
+      if(first){
+        if(first.dataset.uxTok)rowTok=first.dataset.uxTok;
+        else{
+          const m=new RegExp('\\(('+UTOK+')\\)').exec(first.textContent||'');
+          if(m){rowTok=m[1];first.dataset.uxTok=rowTok;}
+        }
+      }
+      cells.forEach((td,j)=>{
+        if(j===0&&rowTok)return;
+        const tok=rowTok||colTok[j];
+        if(tok)convertCell(td,tok);
+      });
+    }
+  }
+  function processUnitSpans(root){
+    const spans=root.querySelectorAll?root.querySelectorAll('span.unit'):[];
+    spans.forEach(sp=>{
+      if(skipped(sp))return;
+      const tn=sp.firstChild;
+      let tok=sp.dataset.uxTok;
+      if(!tok){
+        if(!tn||tn.nodeType!==3)return;
+        const m=RX_UNITONLY.exec(tn.data.trim());
+        if(!m)return;
+        tok=m[1];
+      }
+      const c=U(tok);
+      const prev=sp.previousSibling;
+      if(prev&&prev.nodeType===3&&!wasMine(prev)){
+        const m=RX_TRAIL.exec(prev.data);
+        if(m)setText(prev,prev.data.slice(0,m.index)+m[1].replace(RX_NUMG,n=>fmtG(parseNum(n)*c.f,sigOf(n)))+m[2]);
+      }
+      if(tn&&tn.nodeType===3&&!wasMine(tn)){sp.dataset.uxTok=tok;setText(tn,c.u);}
+    });
+  }
+  function processRoot(root){
+    if(!isUS()||!root)return;
+    let el=root.nodeType===3?root.parentElement:root;
+    if(!el||skipped(el))return;
+    const tb=el.closest('table');
+    if(tb)processTable(tb);
+    el.querySelectorAll('table').forEach(processTable);
+    processUnitSpans(el.parentElement||el);
+    if(root.nodeType===3){convertTextNode(root);return;}
+    const w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,{acceptNode:n=>skipped(n.parentElement)?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});
+    let t;while((t=w.nextNode()))convertTextNode(t);
+  }
+  const mo=new MutationObserver(list=>{
+    if(!isUS())return;
+    for(const r of list){
+      if(r.type==='characterData')processRoot(r.target);
+      else{
+        r.addedNodes.forEach(n=>{if(n.nodeType===1||n.nodeType===3)processRoot(n);});
+        if(r.target&&r.target.nodeType===1&&r.addedNodes.length)processUnitSpans(r.target);
+      }
+    }
+    verifyNote();
+  });
+
+  /* ---------- canvas text: exact wrappers set xform; otherwise generic ---------- */
+  let xform=null;
+  const CP=CanvasRenderingContext2D.prototype, origFill=CP.fillText;
+  CP.fillText=function(t,x,y,mw){
+    if(isUS()&&typeof t==='string'){
+      if(xform)t=xform(t);
+      else{const c=convertText(t);if(c!==null)t=c;}
+    }
+    return mw===undefined?origFill.call(this,t,x,y):origFill.call(this,t,x,y,mw);
+  };
+  /* token swap for canvases whose numbers were already scaled exactly */
+  function tokSwap(t){
+    return t.replace(/kN·m/g,U('kN·m').u).replace(/kN\/m/g,U('kN/m').u).replace(/kN/g,U('kN').u)
+            .replace(/MPa/g,U('MPa').u).replace(/\bmm\b/g,'in')
+            .replace(/(\d|=|\s)m(?=$|[\s,)])/g,'$1ft').replace(/ m(?=$|[\s,)])/g,' ft');
+  }
+
+  /* one extra decimal on canvas labels while drawing in US units (kip, ft and
+     in are 4–40× larger than kN, m and mm, so the original 1–2 decimals would
+     under-report). Scoped to the synchronous draw call and always restored.  */
+  function withDecimals(fn){
+    const TF=Number.prototype.toFixed;
+    Number.prototype.toFixed=function(d){return TF.call(this,(d>=1&&d<=2&&Math.abs(this)<100)?d+1:d);};
+    try{return fn();}finally{Number.prototype.toFixed=TF;}
+  }
+
+  /* ---------- input proxies: field shows US, existing code reads SI ---------- */
+  const NV=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+  const proxied=new Set();
+  const shownStr=x=>String(+(+x).toPrecision(5));
+  function proxify(inp,kind){
+    if(!inp)return;
+    if(inp.__ux){inp.__ux.kind=kind;return;}
+    const rec={kind,si:null,shown:null,attrs:null};
+    inp.__ux=rec;proxied.add(inp);
+    Object.defineProperty(inp,'value',{configurable:true,
+      get(){
+        const raw=NV.get.call(this);
+        if(!isUS())return raw;
+        if(rec.shown!==null&&raw===rec.shown)return String(rec.si);
+        if(raw.trim()===''||!isFinite(+raw))return raw;
+        return String(+(+raw/U(KIND_TOK[rec.kind]).f).toPrecision(12));
+      },
+      set(v){
+        if(!isUS()){rec.shown=null;NV.set.call(this,v);return;}
+        const n=+v;
+        if(v===''||v===null||v===undefined||!isFinite(n)){rec.shown=null;NV.set.call(this,v);return;}
+        const s=shownStr(n*U(KIND_TOK[rec.kind]).f);
+        rec.si=n;rec.shown=s;NV.set.call(this,s);
+      }});
+    if(isUS()){                        /* a freshly built field still holds SI text */
+      const raw=NV.get.call(inp);
+      usAttrs(inp,true);
+      if(raw!==''&&isFinite(+raw))inp.value=+raw;
+    }
+    tagUnitAfter(inp,KIND_TOK[kind]);
+  }
+  function usAttrs(inp,on){
+    const rec=inp.__ux;if(!rec)return;
+    if(on){
+      if(!rec.attrs)rec.attrs={step:inp.getAttribute('step'),min:inp.getAttribute('min'),max:inp.getAttribute('max')};
+      inp.setAttribute('step','any');inp.removeAttribute('min');inp.removeAttribute('max');
+    }else if(rec.attrs){
+      for(const k of ['step','min','max']){
+        if(rec.attrs[k]===null)inp.removeAttribute(k);else inp.setAttribute(k,rec.attrs[k]);
+      }
+      rec.attrs=null;
+    }
+  }
+  /* static unit words written right after a field ("… m", "… kN/m,") */
+  const statics=new Set();
+  function tagUnitAfter(inp,tok){
+    const t=inp.nextSibling;
+    if(!t||t.nodeType!==3||t.__uxStatic)return;
+    const m=/^(\s*)(kN·m|kN\/m|kN|GPa|mm|m)(?![A-Za-z²³⁴])/.exec(t.data);
+    if(!m||m[2]!==tok)return;
+    t.__uxStatic={si:t.data,tok};statics.add(t);
+    if(isUS())t.data=t.data.replace(m[2],U(tok).u);
+  }
+  function applyStatics(){
+    for(const t of statics){
+      if(!t.isConnected){statics.delete(t);continue;}
+      const s=t.__uxStatic;
+      t.data=isUS()?s.si.replace(s.tok,U(s.tok).u):s.si;
+    }
+  }
+
+  /* ---------- static fields of the existing UI ---------- */
+  function wireStatic(){
+    [['inGrid','len_s'],['bL','len_b'],['bXA','len_b'],['bXB','len_b'],['bSelfW','dist'],
+     ['uW','dist'],['uX1','len_b'],['uX2','len_b'],['oTmin','len_s']].forEach(([id,k])=>proxify($(id),k));
+  }
+  function wireRows(boxId){
+    const box=$(boxId);if(!box)return;
+    box.querySelectorAll('input[type=number]').forEach(inp=>{
+      const k=inp.dataset.k;let kind=null;
+      if(boxId==='loadRows')kind=k==='P'?'force':(k==='a'?'len_b':null);
+      else if(boxId==='triRows')kind=(k==='w1'||k==='w2')?'dist':((k==='x1'||k==='x2')?'len_b':null);
+      else if(boxId==='momRows')kind=k==='M'?'mom':(k==='a'?'len_b':null);
+      else if(boxId==='dsParams')kind='len_s';
+      if(kind)proxify(inp,kind);
+    });
+    if(boxId==='dsParams'&&isUS()){
+      const head=box.firstChild;
+      if(head&&head.firstChild&&!head.firstChild.textContent)head.firstChild.textContent='(in)';
+    }
+  }
+  /* wrap the row renderers so freshly built fields are proxied synchronously */
+  renderLoadRows=(o=>function(){const r=o.apply(this,arguments);wireRows('loadRows');return r;})(renderLoadRows);
+  renderTriRows =(o=>function(){const r=o.apply(this,arguments);wireRows('triRows');return r;})(renderTriRows);
+  renderMomRows =(o=>function(){const r=o.apply(this,arguments);wireRows('momRows');return r;})(renderMomRows);
+  dsRenderParams=(o=>function(){const r=o.apply(this,arguments);wireRows('dsParams');return r;})(dsRenderParams);
+
+  /* "+ Add" buttons place new loads at round metric stations (L/2 to 0.01 m);
+     in US units nudge them to the nearest 0.01 ft so the fields read cleanly */
+  function ftRound(m){return Math.round(m*FT_PER_M*100)/100/FT_PER_M;}
+  [['bAddLoad',()=>{const l=beam.loads[beam.loads.length-1];if(l)l.a=Math.min(ftRound(l.a),beam.L);renderLoadRows();}],
+   ['bAddTri', ()=>{const t=beam.tris[beam.tris.length-1];if(t){t.x1=ftRound(t.x1);t.x2=Math.min(Math.abs(t.x2-beam.L)<0.006?beam.L:ftRound(t.x2),beam.L);}renderTriRows();}],
+   ['bAddMom', ()=>{const q=beam.moms[beam.moms.length-1];if(q)q.a=Math.min(ftRound(q.a),beam.L);renderMomRows();}]
+  ].forEach(([id,fix])=>{
+    const btn=$(id);if(!btn||typeof btn.onclick!=='function')return;
+    const o=btn.onclick;
+    btn.onclick=function(ev){const r=o.call(this,ev);if(isUS()){fix();beamRecalc(sectionProps());}return r;};
+  });
+
+  /* load-row notes, exact */
+  loadNote=(o=>function(i){
+    const s0=o.apply(this,arguments);
+    if(!isUS()||!s0)return s0;
+    const l=beam.loads[i],th=(l.ang===undefined?90:l.ang)*Math.PI/180,F=U('kN');
+    return `F<sub>x</sub> = ${f4(l.P*Math.cos(th)*F.f)} ${F.u} &nbsp;·&nbsp; F<sub>y</sub> = ${f4(l.P*Math.sin(th)*F.f)} ${F.u} (down)`;
+  })(loadNote);
+  triNote=(o=>function(i){
+    const s0=o.apply(this,arguments);
+    if(!isUS()||!s0)return s0;
+    const t=beam.tris[i],span=t.x2-t.x1,W=(t.w1+t.w2)/2*span;
+    let cb=t.x1+span/2;
+    if(Math.abs(t.w1+t.w2)>1e-9)cb=t.x1+span*(t.w1+2*t.w2)/(3*(t.w1+t.w2));
+    return `resultant R = ${f4(W*U('kN').f)} ${U('kN').u} acting at x&#772; = ${f4(cb*FT_PER_M)} ft`;
+  })(triNote);
+
+  /* ---------- exact US readouts: Section Lab ---------- */
+  const A_IN=Math.pow(IN_PER_MM,2),S_IN=Math.pow(IN_PER_MM,3),I_IN=Math.pow(IN_PER_MM,4);
+  /* Section readouts with five significant figures, in the active units
+     (SI included — the original printed 3–4 figures and lengths to 0.1 mm). */
+  const g5=x=>Math.abs(x)<1e-12?'0':fmtG(x,5);
+  /* six significant figures (displacement, slope) */
+  function gd6(x){
+    if(!isFinite(x))return '—';
+    const ax=Math.abs(x);
+    if(ax<1e-15)return '0';
+    if(ax>=1e9||ax<1e-7)return fmtG(x,6);
+    return x.toFixed(Math.min(12,Math.max(0,5-Math.floor(Math.log10(ax)))));
+  }
+  /* five significant figures, but never fewer decimals than the original showed */
+  function gd(x,minDec){
+    if(!isFinite(x))return '—';
+    const ax=Math.abs(x);
+    if(ax<1e-12)return (0).toFixed(minDec);
+    if(ax>=1e9||ax<1e-6)return fmtG(x,5);
+    return x.toFixed(Math.min(10,Math.max(minDec,4-Math.floor(Math.log10(ax)))));
+  }
+  updateReadouts=(o=>function(pr){
+    const r=o.apply(this,arguments);
+    if(pr){
+      const set=(id,h)=>{const e=$(id);if(e)e.innerHTML=h;};
+      const lu=isUS()?'in':'mm',k=isUS()?IN_PER_MM:1,k2=k*k,k3=k2*k,k4=k3*k;
+      const un='<span class="unit">'+lu+'</span>';
+      set('pA',fmt(pr.A*k2,lu,2));set('pCx',fmt(pr.cx*k,lu));set('pCy',fmt(pr.cy*k,lu));
+      set('pIx',fmt(pr.Ix*k4,lu,4));set('pIy',fmt(pr.Iy*k4,lu,4));set('pIxy',fmt(pr.Ixy*k4,lu,4));
+      set('pC',g5(pr.ctop*k)+' / '+g5(pr.cbot*k)+un);
+      set('pStop',fmt(pr.Stop*k3,lu,3));set('pSbot',fmt(pr.Sbot*k3,lu,3));
+      set('pR',g5(pr.rx*k)+' , '+g5(pr.ry*k)+un);
+      set('pEff',fmt(Math.min(pr.Stop,pr.Sbot)/pr.A*k,lu));
+      set('pI1',fmt(pr.I1*k4,lu,4));set('pI2',fmt(pr.I2*k4,lu,4));
+      const yAbs=pr.ymin+state.sliceFrac*(pr.ymax-pr.ymin);
+      const s=P_slice(state.contours,pr,yAbs);
+      set('sY',g5(yAbs*k));set('sQ',fmt(s.Q*k3,lu,3));
+      set('sT',g5(s.t*k)+un);
+    }
+    return r;
+  })(updateReadouts);
+
+  updateVerify=(o=>function(pr){
+    const r=o.apply(this,arguments);
+    const box=$('verifyBody');
+    if(!box||!pr||!state.presetKey||!PRESETS[state.presetKey])return r;
+    const key=state.presetKey,P=PRESETS[key];
+    if(isUS()){
+      const th=P.theory();
+      const row=(name,c,t)=>{
+        if(t==null)return '';
+        const err=Math.abs(c-t)/Math.abs(t)*100;
+        return `<tr><td>${name}</td><td>${fmt(c,'')}</td><td>${fmt(t,'')}</td>`+
+               `<td class="${err<0.5?'ok':''}">${err<0.005?'0.00':err.toFixed(2)}%</td></tr>`;
+      };
+      box.innerHTML=
+        `<p class="verify-msg" style="margin-bottom:6px">${P.labelUS?P.labelUS():P.label+' <span style="color:#9AA6B0">(preset dimensions in mm)</span>'}</p>`+
+        `<table class="verify"><tr><th>Qty</th><th>Computed</th><th>Textbook</th><th>Δ</th></tr>`+
+        row('A (in²)',pr.A*A_IN,th.A*A_IN)+row('Ix (in⁴)',pr.Ix*I_IN,th.Ix*I_IN)+
+        row('Iy (in⁴)',pr.Iy*I_IN,th.Iy==null?null:th.Iy*I_IN)+`</table>`+
+        (key==='circle'?'<p class="verify-msg" style="margin-top:6px">The small Δ is polygon discretization — a 60-gon slightly under-fills the true circle.</p>':'');
+    }
+    if(key==='ctool'&&P.note)box.insertAdjacentHTML('beforeend',P.note());
+    return r;
+  })(updateVerify);
+
+  drawExtremeFibers=(o=>function(pr){
+    if(!isUS()||!pr)return o.apply(this,arguments);
+    xform=t=>t.startsWith('c_top=')?'c_top='+(pr.ctop*IN_PER_MM).toFixed(3)+' in'
+            :t.startsWith('c_bot=')?'c_bot='+(pr.cbot*IN_PER_MM).toFixed(3)+' in':t;
+    try{return o.apply(this,arguments);}finally{xform=null;}
+  })(drawExtremeFibers);
+
+  cv.addEventListener('pointermove',()=>{
+    if(!isUS()||!state.mouse)return;
+    const d=3;
+    $('stCoord').textContent='x '+(state.mouse.x*IN_PER_MM).toFixed(d)+' , y '+(state.mouse.y*IN_PER_MM).toFixed(d)+' in';
+  });
+
+  /* ---------- exact US readouts: Beam Lab ---------- */
+  /* Beam results with five significant figures in the active units (SI too),
+     plus support slopes, the second clamp moment, and a probe at any x.   */
+  function slopeArr(r,props){
+    const N=r.xs.length,dx=r.L/(N-1);
+    const EI=(mkCfg().mat.E*1e9)*(props.Ix*1e-12);
+    /* rebuild θ exactly as the solver integrated it: θ_i = θ_0 + Σ trapezoid M/EI */
+    const th=new Array(N);
+    th[0]=(r.def[1]-r.def[0])/dx-(r.M[0]+r.M[1])*dx/(4*EI);
+    for(let i=1;i<N;i++)th[i]=th[i-1]+(r.M[i-1]+r.M[i])/2*dx/EI;
+    return th;
+  }
+  function interp(r,a,x){
+    const N=r.xs.length,t=Math.min(Math.max(x,0),r.L)/r.L*(N-1);
+    const i0=Math.floor(t),i1=Math.min(i0+1,N-1),f=t-i0;
+    return a[i0]*(1-f)+a[i1]*f;
+  }
+  /* ═════════════ EXACT DISPLACEMENT ENGINE (results panel only) ═════════════
+     The diagrams keep the original 601-station solution. For the numbers in the
+     results panel, the elastic curve is integrated EXACTLY: between consecutive
+     breakpoints (supports, load points, load-strip ends, couples) M(x) is a
+     polynomial of degree ≤ 3, so 3-point Gauss–Legendre integrates θ = ∫M/EI and
+     δ = ∫∫M/EI without error. Unknown reactions (force at each support, couple
+     at each clamp) and the two integration constants follow from ΣFy = 0,
+     ΣM = 0, δ = 0 at every support and θ = 0 at every clamp — one linear system
+     for every support combination. Results agree with the closed forms to
+     round-off, so six (and more) significant figures are genuine.             */
+  function exactSolve(r,sup,EI){
+    const L=r.L,P=r.P||[],UD=r.udls||[],TR=r.tris||[],MO=r.moms||[];
+    const ends=ENDS[sup]||['Pin','Roller'];
+    const unk=[];                                  /* {type:'F'|'C', s, end} */
+    [[ends[0],r.xA,'A'],[ends[1],r.xB,'B']].forEach(([k,s0,e])=>{
+      if(k==='Free')return;unk.push({type:'F',s:s0,end:e});if(k==='Fixed')unk.push({type:'C',s:s0,end:e});});
+    const Mload=x=>{let m=0;
+      for(const p of P)if(x>p.a)m-=p.fy*(x-p.a);
+      for(const u of UD){const xi=Math.max(u.x1,Math.min(x,u.x2));if(xi>u.x1)m-=u.w*(xi-u.x1)*(x-(u.x1+xi)/2);}
+      for(const t of TR){const q=P_triPart(t,x);if(q.W!==0)m-=q.W*(x-q.cbar);}
+      for(const c of MO)if(x>c.a)m-=c.M;
+      return m;};
+    const Vload=x=>{let v=0;
+      for(const p of P)if(x>p.a)v-=p.fy;
+      for(const u of UD){const xi=Math.max(u.x1,Math.min(x,u.x2));if(xi>u.x1)v-=u.w*(xi-u.x1);}
+      for(const t of TR){const q=P_triPart(t,x);v-=q.W;}
+      return v;};
+    const mUnit=(j,x)=>{const q=unk[j];if(!(x>q.s))return 0;return q.type==='F'?(x-q.s):-1;};
+    const vUnit=(j,x)=>{const q=unk[j];return (q.type==='F'&&x>q.s)?1:0;};
+    const bps=[0,L,r.xA,r.xB];
+    for(const p of P)bps.push(p.a);
+    for(const u of UD)bps.push(u.x1,u.x2);
+    for(const t of TR)bps.push(t.x1,t.x2);
+    for(const c of MO)bps.push(c.a);
+    const BP=Array.from(new Set(bps.filter(v=>isFinite(v)&&v>=0&&v<=L).map(v=>+v))).sort((a,b)=>a-b);
+    const GX=[-Math.sqrt(0.6),0,Math.sqrt(0.6)],GW=[5/9,8/9,5/9];
+    /* T(x)=∫0^x f,  D(x)=∫0^x (x−ξ) f(ξ) dξ — exact for polynomial pieces of degree ≤ 4 */
+    const integ=(f,x)=>{let T=0,D=0;
+      const pts=BP.filter(v=>v<x).concat([x]);
+      for(let k=0;k+1<pts.length;k++){
+        const a=pts[k],b=pts[k+1];if(b-a<=0)continue;
+        const h=(b-a)/2,c=(a+b)/2;
+        for(let g=0;g<3;g++){const xi=c+h*GX[g],fv=f(xi)*GW[g]*h;T+=fv;D+=fv*(x-xi);}
+      }
+      return [T/EI,D/EI];};
+    const n=unk.length,NU=n+2;                   /* unknowns: u_0..u_{n-1}, c0, c1 */
+    const A=[],b=[];
+    /* ΣFy = 0 and ΣM about the right end = 0 (whole-beam free body) */
+    const xe=L+1e-9*Math.max(1,L);
+    A.push(unk.map((q,j)=>vUnit(j,xe)).concat([0,0]));b.push(-Vload(xe));
+    A.push(unk.map((q,j)=>mUnit(j,xe)).concat([0,0]));b.push(-Mload(xe));
+    /* kinematic conditions */
+    const cache=new Map();
+    const intAll=x=>{if(cache.has(x))return cache.get(x);
+      const v={load:integ(Mload,x),u:unk.map((q,j)=>integ(xx=>mUnit(j,xx),x))};cache.set(x,v);return v;};
+    for(const q of unk){
+      const I=intAll(q.s);
+      if(q.type==='F'){A.push(I.u.map(t=>t[1]).concat([1,q.s]));b.push(-I.load[1]);}
+      else{A.push(I.u.map(t=>t[0]).concat([0,1]));b.push(-I.load[0]);}
+    }
+    if(A.length!==NU)return null;
+    /* Gaussian elimination with partial pivoting */
+    const M=A.map((row,i)=>row.concat([b[i]]));
+    for(let c=0;c<NU;c++){
+      let piv=c;for(let i=c+1;i<NU;i++)if(Math.abs(M[i][c])>Math.abs(M[piv][c]))piv=i;
+      if(Math.abs(M[piv][c])<1e-300)return null;
+      [M[c],M[piv]]=[M[piv],M[c]];
+      for(let i=0;i<NU;i++){if(i===c)continue;const f=M[i][c]/M[c][c];if(f)for(let k=c;k<=NU;k++)M[i][k]-=f*M[c][k];}
+    }
+    const sol=M.map((row,i)=>row[NU]/row[i]);
+    const u=sol.slice(0,n),c0=sol[n],c1=sol[n+1];
+    const Mx=x=>{let m=Mload(x);for(let j=0;j<n;j++)m+=u[j]*mUnit(j,x);return m;};
+    const Vx=x=>{let v=Vload(x);for(let j=0;j<n;j++)v+=u[j]*vUnit(j,x);return v;};
+    const TD=x=>integ(Mx,x);
+    const delta=x=>c0+c1*x+TD(x)[1];
+    const theta=x=>c1+TD(x)[0];
+    const reac={RA:0,RB:0,CA:0,CB:0};
+    unk.forEach((q,j)=>{reac[(q.type==='F'?'R':'C')+q.end]=u[j];});
+    /* |δ|max: dense scan, then golden-section refinement in the best cell */
+    const NS=1200;let ib=0,vb=-1;const xsS=[];
+    for(let i=0;i<=NS;i++){const x=L*i/NS;xsS.push(x);const d=Math.abs(delta(x));if(d>vb){vb=d;ib=i;}}
+    let lo=xsS[Math.max(0,ib-1)],hi=xsS[Math.min(NS,ib+1)];
+    const gr=(Math.sqrt(5)-1)/2;
+    let x1=hi-gr*(hi-lo),x2=lo+gr*(hi-lo),f1=Math.abs(delta(x1)),f2=Math.abs(delta(x2));
+    for(let it=0;it<80&&hi-lo>1e-12*Math.max(1,L);it++){
+      if(f1>f2){hi=x2;x2=x1;f2=f1;x1=hi-gr*(hi-lo);f1=Math.abs(delta(x1));}
+      else{lo=x1;x1=x2;f1=f2;x2=lo+gr*(hi-lo);f2=Math.abs(delta(x2));}
+    }
+    let xD=(lo+hi)/2;
+    for(const xc of [xsS[ib],0,L])if(Math.abs(delta(xc))>Math.abs(delta(xD)))xD=xc;
+    return {delta,theta,M:Mx,V:Vx,reac,xD,dMax:delta(xD)};
+  }
+
+  beamRecalc=(o=>function(props){
+    const ret=o.apply(this,arguments);
+    if(props&&bres&&bres.r){
+      const r=bres.r,set=(id,h)=>{const e=$(id);if(e)e.innerHTML=h;};
+      const Fu=U('kN'),Mu=U('kN·m'),Su=U('MPa'),Lu=U('m'),Du=U('mm'),Ku=U('kg');
+      const F=v=>gd(v/1e3*Fu.f,2), Mo=v=>gd(v/1e3*Mu.f,2), X=v=>gd(v*Lu.f,2), S=v=>gd(v*Su.f,1), S2=v=>gd(v*Su.f,2), D=v=>gd(v*1e3*Du.f,3);
+      const un=u=>'<span class="unit">'+u+'</span>';
+      const EIx=(mkCfg().mat.E*1e9)*(props.Ix*1e-12);
+      let ex=null;try{ex=exactSolve(r,r.supType,EIx);}catch(e){ex=null;}
+      /* statically indeterminate supports: rebuild V and M at the same 601
+         stations from the exact redundants, so |M|max, |V|max and the stresses
+         carry the same accuracy as the reactions (determinate cases are exact
+         already and are left as computed) */
+      let rc=r;
+      const IND={fixedroller:1,fixedpin:1,pinfixed:1,rollerfixed:1,fixedfixed:1};
+      if(ex&&IND[r.supType]){
+        try{
+          const c=mkCfg(),e2=ENDS[r.supType],NN=r.xs.length;let q;
+          if(e2[0]==='Fixed')q=P_beam0(Object.assign({},c,{supType:'fixed',xA:r.xA,xB:r.xB,
+              loads:(c.loads||[]).concat([{P:-ex.reac.RB/1e3,a:r.xB,ang:90}]),
+              moms:(c.moms||[]).concat(e2[1]==='Fixed'?[{on:true,M:ex.reac.CB/1e3,a:r.xB}]:[])}),props,NN);
+          else q=P_beam0(Object.assign({},c,{supType:'fixed',xA:r.xB,xB:r.xA,
+              loads:(c.loads||[]).concat([{P:-ex.reac.RA/1e3,a:r.xA,ang:90}])}),props,NN);
+          let iM=0,iV=0;for(let i=0;i<NN;i++){if(Math.abs(q.M[i])>Math.abs(q.M[iM]))iM=i;if(Math.abs(q.V[i])>Math.abs(q.V[iV]))iV=i;}
+          rc=Object.assign({},r,{M:q.M,V:q.V,iM,iV});
+        }catch(e){rc=r;}
+      }
+      const ns=P_normStress(rc,props);
+      const xC=rc.xs[ns.iC];
+      const tp=P_tauMax(state.contours,props,Math.abs(rc.V[rc.iV]),81,true);
+      const m=MATS[beam.mat];
+      const mass=m.rho*(props.A*1e-6)*r.L;
+      const cw=v=>v>=0?'↺':'↻';
+      const RA=ex?ex.reac.RA:r.R1,RB=ex?ex.reac.RB:r.R2;
+      const MAx=ex?ex.reac.CA:r.MR,MBx=ex?ex.reac.CB:(r.MB||0);
+      set('rR',F(RA)+' , '+F(RB)+un(Fu.u));
+      set('rM',Mo(rc.M[rc.iM])+un(Mu.u)+' @ '+X(rc.xs[rc.iM])+un(Lu.u));
+      set('rV',F(rc.V[rc.iV])+un(Fu.u)+' @ '+X(rc.xs[rc.iV])+un(Lu.u));
+      /* displacement and slopes to ≥ 6 significant figures from the exact engine */
+      /* displacement: at least 6 decimal places (and at least 6 significant figures) */
+      const D6=v=>{const x=v*1e3*Du.f,ax=Math.abs(x);if(!isFinite(x))return '—';if(ax<1e-15)return (0).toFixed(6);
+        return x.toFixed(Math.min(12,Math.max(6,5-Math.floor(Math.log10(ax)))));}, X6=v=>gd6(v*Lu.f);
+      if(ex)set('rD',D6(ex.dMax)+un(Du.u)+' @ '+X6(ex.xD)+un(Lu.u));
+      else set('rD',D6(r.def[r.iD])+un(Du.u)+' @ '+X(r.xs[r.iD])+un(Lu.u));
+      const ends=ENDS[r.supType]||['Pin','Roller'];
+      const cA=ends[0]==='Fixed',cB=ends[1]==='Fixed';
+      const hA=ends[0]==='Pin'||ends[0]==='Fixed',hB=ends[1]==='Pin'||ends[1]==='Fixed';
+      const lab=(id,html)=>{const k=$(id)&&$(id).previousElementSibling;if(!k)return;
+        if(k.__uxOrig===undefined)k.__uxOrig=k.innerHTML;k.innerHTML=html===null?k.__uxOrig:html;};
+      if(cA&&cB){lab('rMA','Reaction moments M<sub>A</sub> , M<sub>B</sub>');
+        set('rMA','A '+Mo(MAx)+' '+cw(MAx)+' · B '+Mo(MBx)+' '+cw(MBx)+un(Mu.u));}
+      else if(cB){lab('rMA','Reaction moment M<sub>B</sub>');set('rMA',Mo(MBx)+un(Mu.u)+' '+cw(MBx));}
+      else{lab('rMA',null);
+        if(cA)set('rMA',Mo(MAx)+un(Mu.u)+' '+cw(MAx));else set('rMA','—');}
+      if(hA&&hB&&NEWSUP[r.supType]){
+        lab('rFx','ΣF<sub>x</sub> applied / H<sub>A</sub> , H<sub>B</sub>');
+        set('rFx',F(r.sumFx)+' / A '+F(r.HxA)+' · B '+F(r.HxB)+un(Fu.u));
+      }else if(NEWSUP[r.supType]&&!hA){
+        lab('rFx',hB?'ΣF<sub>x</sub> applied / H<sub>B</sub>':'ΣF<sub>x</sub> applied / H<sub>x</sub>');
+        set('rFx',F(r.sumFx)+' / '+F(r.Hx)+un(Fu.u));
+      }else{lab('rFx',null);set('rFx',F(r.sumFx)+' / '+F(r.Hx)+un(Fu.u));}
+      let xw=$('rWarnX');
+      if(!xw){xw=document.createElement('p');xw.id='rWarnX';xw.className='warnnote';
+        const rw=$('rWarn');if(rw)rw.insertAdjacentElement('afterend',xw);}
+      xw.style.display=r.unstableX?'block':'none';
+      xw.textContent=r.unstableX?'⚠ Roller + Roller has no horizontal restraint: the applied horizontal load (ΣFₓ ≠ 0) is unresisted, so the beam is a mechanism in x. Bending results are shown for the transverse loads only.':'';
+      set('rSt',S(ns.sTop)+un(Su.u)+(ns.sTop<0?' (comp)':' (tens)'));
+      set('rSb',S(ns.sBot)+un(Su.u)+(ns.sBot<0?' (comp)':' (tens)'));
+      const Nmax=r.N[r.iN];
+      set('rN',F(Nmax)+un(Fu.u)+' @ '+X(r.xs[r.iN])+un(Lu.u)+(Math.abs(Nmax)<1e-9?'':(Nmax>0?' (tens)':' (comp)')));
+      set('rSn',S2(ns.sN)+un(Su.u));
+      set('rSc',S(ns.sMax)+un(Su.u)+' @ '+X(xC)+un(Lu.u));
+      set('rTau',S2(tp.tauMax)+un(Su.u));
+      set('rMass',gd(mass*Ku.f,1)+un(Ku.u));
+      if(isUS()){
+        const sv=$('bSelfVal');
+        if(sv)sv.textContent=beam.selfCustom?'(using custom w = '+f4(beam.selfW*U('kN/m').f)+' '+U('kN/m').u+')'
+          :'(ρAg = '+f4(m.rho*props.A*1e-6*9.81/1e3*U('kN/m').f)+' '+U('kN/m').u+')';
+      }
+      /* support slopes and the probe */
+      const th=ex?null:slopeArr(r,props);
+      const rad=v=>Math.abs(v)<1e-15?'0':gd6(v);
+      const thAt=x=>ex?ex.theta(x):interp(r,th,x);
+      const thA=thAt(r.xA),thB=thAt(r.xB);
+      set('rTh','A '+rad(thA)+' · B '+rad(thB)+un('rad'));
+      const pin=$('bProbeX');
+      if(pin){
+        const raw=NV.get.call(pin);
+        let xp=raw===''?NaN:+pin.value;
+        const out=$('bProbeOut');
+        if(!isFinite(xp)){out.innerHTML='<span style="color:#9AA6B0">enter x</span>';}
+        else{
+          xp=Math.min(Math.max(xp,0),r.L);
+          const dP=ex?ex.delta(xp):interp(r,r.def,xp),mP=ex?ex.M(xp):interp(r,r.M,xp),vP=ex?ex.V(xp):interp(r,r.V,xp);
+          out.innerHTML='δ '+D6(dP)+un(Du.u)+' · θ '+rad(thAt(xp))+un('rad')+'<br>'+
+            'M '+Mo(mP)+un(Mu.u)+' · V '+F(vP)+un(Fu.u);
+        }
+      }
+    }
+    return ret;
+  })(beamRecalc);
+
+  function scaleR(r){
+    const fx=FT_PER_M,fF=kip()?KIP_PER_KN:LBF_PER_KN,fW=fF/FT_PER_M,fM=fF*FT_PER_M,fD=IN_PER_MM;
+    /* arrays the original treats as identically zero (|v| ≤ 1e-12) must stay zero
+       after scaling, or round-off would be drawn as a full-height diagram */
+    const sc=(a,k)=>{if(!a)return a;let mx=0;for(const v of a)mx=Math.max(mx,Math.abs(v));return mx>1e-12?a.map(v=>v*k):a.map(()=>0);};
+    return Object.assign({},r,{
+      L:r.L*fx,xA:r.xA*fx,xB:r.xB*fx,R1:r.R1*fF,R2:r.R2*fF,MR:r.MR*fM,
+      xs:sc(r.xs,fx),N:sc(r.N,fF),V:sc(r.V,fF),M:sc(r.M,fM),def:sc(r.def,fD),
+      udls:(r.udls||[]).map(u=>Object.assign({},u,{w:u.w*fW,x1:u.x1*fx,x2:u.x2*fx})),
+      tris:(r.tris||[]).map(t=>Object.assign({},t,{w1:t.w1*fW,w2:t.w2*fW,x1:t.x1*fx,x2:t.x2*fx,W:t.W*fF,cbar:t.cbar*fx})),
+      P:(r.P||[]).map(p=>Object.assign({},p,{a:p.a*fx,P:p.P*fF,fx:p.fx*fF,fy:p.fy*fF})),
+      moms:(r.moms||[]).map(q=>Object.assign({},q,{a:q.a*fx,M:q.M*fM}))});
+  }
+  drawBeamDiagrams=(o=>function(r,hoverX){
+    if(!isUS()||!r)return o.apply(this,arguments);
+    const L0=beam.L;
+    beam.L=+(L0*FT_PER_M).toPrecision(7);
+    xform=tokSwap;
+    try{const r2=scaleR(r);return withDecimals(()=>o.call(this,r2,hoverX==null?hoverX:hoverX*FT_PER_M));}
+    finally{beam.L=L0;xform=null;}
+  })(drawBeamDiagrams);
+
+  drawStress=(o=>function(r,props,st){
+    if(!isUS()||!st)return o.apply(this,arguments);
+    const fS=U('MPa').f;
+    const st2=Object.assign({},st,{sTop:st.sTop*fS,sBot:st.sBot*fS,tauMax:st.tauMax*fS,
+      tau:st.tau?st.tau.map(v=>v*fS):st.tau,sN:st.sN*fS,sBendTop:st.sBendTop*fS,sBendBot:st.sBendBot*fS,
+      xC:st.xC*FT_PER_M});
+    const r2=Object.assign({},r,{xs:r.xs.map(v=>v*FT_PER_M)});
+    xform=tokSwap;
+    try{return withDecimals(()=>o.call(this,r2,props,st2));}finally{xform=null;}
+  })(drawStress);
+
+  /* Design Studio sketch: dimension labels carry no unit in the original */
+  drawDs=(o=>function(){
+    if(!isUS())return o.apply(this,arguments);
+    xform=t=>{
+      let m=/^(d|bf|D|B|h|b)=(-?\d+(?:\.\d+)?)$/.exec(t);
+      if(m)return m[1]+'='+(+m[2]*IN_PER_MM).toFixed(2)+' in';
+      if(/^(t_f |wall t )/.test(t)&&/ mm$/.test(t))
+        return t.replace(/\d+(?:\.\d+)?/g,n=>(+n*IN_PER_MM).toFixed(3)).replace(/ mm$/,' in');
+      const c=convertText(t);return c===null?t:c;
+    };
+    try{return o.apply(this,arguments);}finally{xform=null;}
+  })(drawDs);
+
+  /* ---------- verification panel note (SI benchmark stays SI) ---------- */
+  function verifyNote(){
+    const v=$('bxVerifyOut');if(!v)return;
+    let n=$('uxVerNote');
+    if(!n){
+      n=document.createElement('p');n.id='uxVerNote';n.className='note';n.dataset.uxSkip='1';
+      n.style.marginTop='6px';
+      n.textContent='This solver self-check is a fixed SI benchmark (100 × 200 mm rectangle, 4 m span, 10 kN and 5 kN/m); its values stay in N·m and mm in every unit system.';
+      v.insertAdjacentElement('afterend',n);
+    }
+    n.style.display=isUS()?'':'none';
+  }
+
+  /* ---------- header selector ---------- */
+  const css=document.createElement('style');
+  css.textContent=`
+  header .uxsys{margin-bottom:12px;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
+  header .uxsys select{font-family:"IBM Plex Mono",monospace;font-size:11.5px;padding:3px 4px}
+  .ctool{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px}
+  .ctool .row{align-items:center}
+  .ctool label.chk{gap:4px}
+  .ctool input.num{width:76px}
+  .ctool .ctout{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.6}
+  .ctool .ctout b{color:var(--ink);font-weight:600}
+  .ctool .cterr{color:var(--warn);font-size:11.5px;margin-top:6px}
+  .ctool .ctgrp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  /* US values carry more digits than their SI twins: give the fields room */
+  body[data-ux="US"] input.num{width:76px}
+  body[data-ux="US"] input.num.w44{width:72px}
+  body[data-ux="US"] .prow{grid-template-columns:minmax(0,1fr) 70px 64px 64px}
+  body[data-ux="US"] .prow input.num{width:100%}
+  body[data-ux="US"] table.verify td+td{padding-left:8px}
+  `;
+  document.head.appendChild(css);
+  const hdr=document.querySelector('header');
+  const lab=document.createElement('label');
+  lab.className='uxsys';lab.dataset.uxSkip='1';
+  lab.title='SI: mm, m, kN, MPa, kg.  US · kip: in, ft, kip, ksi, lb.  US · lbf: in, ft, lbf, psi, lb.  Computations always run in SI; this changes the units you type in and read out. CSV exports stay in SI (column names carry the unit).';
+  lab.innerHTML='Units <select class="num" id="uxSys" aria-label="Unit system">'+
+    '<option value="SI" title="mm · m · kN · MPa · kg">SI</option>'+
+    '<option value="USk" title="in · ft · kip · ksi · lb">US · kip</option>'+
+    '<option value="USl" title="in · ft · lbf · psi · lb">US · lbf</option></select>';
+  const nav=hdr&&hdr.querySelector('nav.tabs');
+  if(nav)hdr.insertBefore(lab,nav);else if(hdr)hdr.appendChild(lab);
+
+  /* ---------- switching ---------- */
+  function setSystem(ns,opts){
+    if(ns!=='SI'&&ns!=='USk'&&ns!=='USl')ns='SI';
+    if(ns===sys&&!(opts&&opts.force))return;
+    const old=sys;
+    /* 1 · fields: read SI under the old system, write it back under the new */
+    const vals=[];
+    for(const inp of proxied){
+      if(!inp.isConnected){proxied.delete(inp);continue;}
+      vals.push([inp,inp.value,NV.get.call(inp)]);
+    }
+    restoreAll();
+    sys=ns;
+    for(const [inp,si,raw] of vals){
+      usAttrs(inp,isUS());
+      if(raw!==''&&isFinite(+si))inp.value=+si;
+    }
+    /* 2 · section grid: 10 mm ⇄ 0.5 in when it is still at its default */
+    const g=$('inGrid');
+    if(isUS()&&old==='SI'&&Math.abs(state.grid-10)<1e-9){state.grid=12.7;g.value=12.7;}
+    else if(!isUS()&&old!=='SI'&&Math.abs(state.grid-12.7)<1e-9){state.grid=10;g.value=10;}
+    applyStatics();
+    const sYn=$('sY')&&$('sY').nextSibling;
+    if(sYn&&sYn.nodeType===3)sYn.data=isUS()?' in':' mm';
+    const sc=$('stCoord');if(sc&&/—/.test(sc.textContent))sc.textContent=isUS()?'x — , y — in':'x — , y — mm';
+    const bc=$('bCoord');if(bc&&/—/.test(bc.textContent))bc.textContent=isUS()?'x — ft':'x — m';
+    const dh=$('dsParams')&&$('dsParams').firstChild;
+    if(dh&&dh.firstChild&&/^(\(in\))?$/.test(dh.firstChild.textContent))dh.firstChild.textContent=isUS()?'(in)':'';
+    /* 3 · re-render the exact panels and canvases */
+    try{renderLoadRows();renderTriRows();renderMomRows();}catch(e){}
+    try{draw();}catch(e){}
+    try{if(typeof drawOpt==='function')drawOpt();}catch(e){}
+    try{if(typeof drawDs==='function')drawDs();}catch(e){}
+    try{if(opt.origE&&opt.bestE)scoreboard();}catch(e){}
+    ctRefresh();
+    /* 4 · everything else: convert tokens in place (restorable) */
+    if(isUS())processRoot(document.body);
+    verifyNote();
+    if(isUS())document.body.dataset.ux='US';else delete document.body.dataset.ux;
+    $('uxSys').value=sys;
+    try{localStorage.setItem(LS_KEY,sys);}catch(e){}
+  }
+  $('uxSys').addEventListener('change',e=>setSystem(e.target.value));
+
+  /* ═════════════════════════ CIRCLE TOOL ═════════════════════════ */
+  const presetCard=document.querySelector('#viewSection .presets');
+  const ct=document.createElement('div');
+  ct.className='ctool';ct.id='ctPanel';ct.dataset.uxSkip='1';
+  ct.innerHTML=
+    '<h3>Circle tool — circular section from its diameter or radius</h3>'+
+    '<div class="row">'+
+      '<span class="ctgrp"><select class="num" id="ctBy" aria-label="Define circle by">'+
+        '<option value="D">Diameter D</option><option value="R">Radius r</option></select>'+
+        '<input type="number" class="num" id="ctVal" value="140" step="any" aria-label="Outer size"> <span class="ctu">mm</span></span>'+
+      '<label class="chk"><input type="checkbox" id="ctHollow"> Hollow (tube)</label>'+
+      '<span class="ctgrp" id="ctInWrap" style="display:none">inner <span id="ctInLab">D<sub>i</sub></span>'+
+        '<input type="number" class="num" id="ctIn" value="100" step="any" aria-label="Inner size"> <span class="ctu">mm</span></span>'+
+    '</div>'+
+    '<div class="row" style="margin-top:8px">'+
+      '<label class="chk">Segments <input type="number" class="num w44" id="ctN" value="120" min="12" max="720" step="4"></label>'+
+      '<label class="chk">Vertices <select class="num" id="ctMode">'+
+        '<option value="area">area-matched (exact A)</option><option value="ins">on the circle (inscribed)</option></select></label>'+
+      '<button id="ctMake" class="go">Create circular section</button>'+
+      '<button id="ctHole" title="Cut a circular hole of this size into the current section">Cut circular hole</button>'+
+      '<span class="ctgrp">hole centre x <input type="number" class="num w44" id="ctHx" step="any" placeholder="x̄" aria-label="Hole centre x"> '+
+      'y <input type="number" class="num w44" id="ctHy" step="any" placeholder="ȳ" aria-label="Hole centre y"> <span class="ctu">mm</span></span>'+
+    '</div>'+
+    '<div class="ctout" id="ctOut"></div><div class="cterr" id="ctErr"></div>';
+  if(presetCard)presetCard.appendChild(ct);
+  ['ctVal','ctIn','ctHx','ctHy'].forEach(id=>proxify($(id),'len_s'));
+
+  function ctRead(){
+    const by=$('ctBy').value;
+    const v=+$('ctVal').value, vi=+$('ctIn').value;
+    const hollow=$('ctHollow').checked;
+    let n=Math.round(+$('ctN').value||120);
+    n=Math.min(720,Math.max(12,n));
+    const Ro=by==='D'?v/2:v, Ri=hollow?(by==='D'?vi/2:vi):0;
+    return {by,Ro,Ri,hollow,n,mode:$('ctMode').value};
+  }
+  function ctPoly(cx,cy,R,n,mode){
+    const Rv=mode==='area'?R*Math.sqrt(2*Math.PI/(n*Math.sin(2*Math.PI/n))):R;
+    const pts=[];
+    for(let i=0;i<n;i++){const a=2*Math.PI*i/n;pts.push({x:cx+Rv*Math.cos(a),y:cy+Rv*Math.sin(a)});}
+    return pts;
+  }
+  const Lfmt=mm=>isUS()?(mm*IN_PER_MM).toFixed(4).replace(/\.?0+$/,'')+' in':(+mm.toFixed(3))+' mm';
+  function ctTheory(Ro,Ri){
+    return {A:Math.PI*(Ro*Ro-Ri*Ri),Ix:Math.PI*(Math.pow(Ro,4)-Math.pow(Ri,4))/4,Iy:Math.PI*(Math.pow(Ro,4)-Math.pow(Ri,4))/4};
+  }
+  function ctValidate(c,needOuter){
+    if(!(c.Ro>0)||!isFinite(c.Ro))return (c.by==='D'?'Diameter':'Radius')+' must be a positive number.';
+    if(c.hollow&&!(c.Ri>0&&c.Ri<c.Ro))return 'Inner size must be positive and smaller than the outer size.';
+    return '';
+  }
+  function ctRefresh(){
+    const u=isUS()?'in':'mm';
+    ct.querySelectorAll('.ctu').forEach(s=>s.textContent=u);
+    $('ctInLab').innerHTML=$('ctBy').value==='D'?'D<sub>i</sub>':'r<sub>i</sub>';
+    $('ctInWrap').style.display=$('ctHollow').checked?'':'none';
+    const c=ctRead(),err=ctValidate(c);
+    $('ctErr').textContent=err;
+    if(err){$('ctOut').innerHTML='';return;}
+    const th=ctTheory(c.Ro,c.Ri);
+    const A=isUS()?fmt(th.A*A_IN,'in',2):fmt(th.A,'mm',2);
+    const I=isUS()?fmt(th.Ix*I_IN,'in',4):fmt(th.Ix,'mm',4);
+    const S=isUS()?fmt(th.Ix/c.Ro*S_IN,'in',3):fmt(th.Ix/c.Ro,'mm',3);
+    $('ctOut').innerHTML='Exact: D = <b>'+Lfmt(2*c.Ro)+'</b>'+(c.hollow?' · D<sub>i</sub> = <b>'+Lfmt(2*c.Ri)+'</b> · t = <b>'+Lfmt(c.Ro-c.Ri)+'</b>':'')+
+      ' · A = <b>'+A+'</b> · I<sub>x</sub> = I<sub>y</sub> = <b>'+I+'</b> · S = I/r = <b>'+S+'</b>';
+  }
+  ['ctBy','ctVal','ctIn','ctHollow','ctN','ctMode'].forEach(id=>{
+    $(id).addEventListener('input',ctRefresh);$(id).addEventListener('change',ctRefresh);
+  });
+  function ctPreset(c){
+    const cx=c.Ro,cy=c.Ro;
+    const outer={isHole:false,pts:ctPoly(cx,cy,c.Ro,c.n,c.mode)};
+    const shape=c.hollow?[outer,{isHole:true,pts:ctPoly(cx,cy,c.Ri,c.n,c.mode)}]:[outer];
+    const snap={Ro:c.Ro,Ri:c.Ri,n:c.n,mode:c.mode,hollow:c.hollow,cx,cy};
+    const desc=sysLabel=>{
+      const L=v=>sysLabel?Lfmt(v):(+v.toFixed(3))+' mm';
+      return (snap.hollow?'Circular tube D = '+L(2*snap.Ro)+', Dᵢ = '+L(2*snap.Ri)
+                         :'Circle D = '+L(2*snap.Ro))+' ('+snap.n+'-gon, '+(snap.mode==='area'?'area-matched':'inscribed')+')';
+    };
+    PRESETS.ctool={
+      label:desc(false),
+      labelUS:()=>desc(true),
+      ctool:snap,
+      build(){return shape.map(k=>({isHole:k.isHole,pts:k.pts.map(p=>({x:p.x,y:p.y}))}));},
+      theory(){return ctTheory(snap.Ro,snap.Ri);},
+      note(){
+        const pr=sectionProps(),th=ctTheory(snap.Ro,snap.Ri);
+        if(!pr)return '';
+        const dA=(pr.A-th.A)/th.A*100,dI=(pr.Ix-th.Ix)/th.Ix*100;
+        const e=v=>Math.abs(v)<1e-9?'0':v.toExponential(1);
+        return '<p class="verify-msg" style="margin-top:6px">Circle tool: the true circle is approximated by a '+snap.n+
+          '-sided polygon. '+(snap.mode==='area'
+            ?'Vertices sit slightly outside the circle so the polygon area equals πr² exactly (ΔA = '+e(dA)+' %); the remaining I error is '+e(dI)+' %.'
+            :'Vertices lie on the circle, so the polygon under-fills it (ΔA = '+e(dA)+' %, ΔI = '+e(dI)+' %); more segments shrink this as 1/n².')+
+          '</p>';
+      }
+    };
+    return shape;
+  }
+  $('ctMake').addEventListener('click',()=>{
+    const c=ctRead(),err=ctValidate(c);
+    if(err){$('ctErr').textContent=err;return;}
+    const shape=ctPreset(c);
+    state.contours=shape.map(k=>({isHole:k.isHole,pts:k.pts.map(p=>({x:p.x,y:p.y}))}));
+    state.active=null;state.presetKey='ctool';
+    fitView();
+  });
+  $('ctHole').addEventListener('click',()=>{
+    const c=ctRead();
+    const R=c.by==='D'?(+$('ctVal').value)/2:(+$('ctVal').value);
+    if(!(R>0)){$('ctErr').textContent='Enter the hole '+(c.by==='D'?'diameter':'radius')+' in the first field.';return;}
+    const pr=sectionProps();
+    if(!pr){$('ctErr').textContent='Draw or load a section first, then cut the hole into it.';return;}
+    const hxRaw=NV.get.call($('ctHx')),hyRaw=NV.get.call($('ctHy'));
+    const hx=hxRaw===''?pr.cx:+$('ctHx').value, hy=hyRaw===''?pr.cy:+$('ctHy').value;
+    const pts=ctPoly(hx,hy,R,c.n,c.mode);
+    const solids=state.contours.filter(k=>!k.isHole&&k.pts.length>=3);
+    const holes=state.contours.filter(k=>k.isHole&&k.pts.length>=3);
+    const inside=pts.every(p=>solids.some(s=>P_pointIn(p,s.pts)))&&pts.every(p=>!holes.some(h=>P_pointIn(p,h.pts)))
+      &&!holes.some(h=>h.pts.some(q=>P_pointIn(q,pts)));
+    let crosses=false;
+    for(const s of state.contours){if(s.pts.length>=3&&P_pairX(pts,s.pts)){crosses=true;break;}}
+    if(!inside||crosses){$('ctErr').textContent='That hole does not fit entirely inside solid material at the chosen centre.';return;}
+    $('ctErr').textContent='';
+    const prevKey=state.presetKey,P=PRESETS.ctool;
+    state.contours.push({isHole:true,pts});
+    /* a concentric hole in a solid circle-tool section is still a textbook tube */
+    if(prevKey==='ctool'&&P&&!P.ctool.hollow&&Math.abs(hx-P.ctool.cx)<1e-9&&Math.abs(hy-P.ctool.cy)<1e-9&&R<P.ctool.Ro&&c.n===P.ctool.n&&c.mode===P.ctool.mode){
+      ctPreset({Ro:P.ctool.Ro,Ri:R,n:c.n,mode:c.mode,hollow:true});
+      state.presetKey='ctool';
+    }else markCustom();
+    state.active=null;draw();
+  });
+
+  /* ═════════════════ CUSTOM ELASTIC MODULUS (Beam Lab) ═════════════════
+     Off by default. When ticked, the Beam Lab solver (and the Free-form
+     optimizer, which reads the same configuration) uses the E you enter;
+     yield strength, density and cost still come from the selected material.
+     Design Studio keeps using its own material selector, unchanged.        */
+  const matLab=$('bMat')&&$('bMat').closest('label');
+  if(matLab){
+    const w=document.createElement('span');
+    w.style.cssText='display:inline-flex;align-items:center;gap:8px';
+    w.innerHTML='<label class="chk" title="Override the elastic modulus of the selected material"><input type="checkbox" id="bEOn"> Custom E</label>'+
+      '<label class="chk">E <input type="number" class="num w44" id="bE" step="any" min="0" disabled aria-label="Elastic modulus"> GPa</label>';
+    matLab.insertAdjacentElement('afterend',w);
+  }
+  const eOn=$('bEOn'),eIn=$('bE');
+  let customE=null;                                  /* GPa, or null = material value */
+  function eShowMat(){if(eIn&&!eOn.checked)eIn.value=MATS[beam.mat].E;}
+  function eRead(){
+    if(!eOn||!eOn.checked){customE=null;if(eIn)eIn.style.borderColor='';return;}
+    const v=+eIn.value;
+    if(isFinite(v)&&v>0){customE=v;eIn.style.borderColor='';}
+    else{customE=null;eIn.style.borderColor='var(--warn)';}
+  }
+  if(eIn){
+    proxify(eIn,'mod');
+    eShowMat();
+    eOn.addEventListener('change',()=>{
+      eIn.disabled=!eOn.checked;
+      if(!eOn.checked)eShowMat();
+      eRead();beamRecalc(sectionProps());
+    });
+    eIn.addEventListener('input',()=>{eRead();beamRecalc(sectionProps());});
+    $('bMat').addEventListener('change',()=>{eShowMat();});
+  }
+  mkCfg=(o=>function(){
+    const c=o.apply(this,arguments);
+    if(customE!==null&&c&&c.mat)c.mat=Object.assign({},c.mat,{E:customE,name:c.mat.name+' (custom E = '+customE+' GPa)'});
+    return c;
+  })(mkCfg);
+  /* the closed-form comparison reads E from the material table: lend it the custom value */
+  beamVerify=(o=>function(){
+    if(customE===null)return o.apply(this,arguments);
+    const M=MATS[beam.mat],E0=M.E;M.E=customE;
+    try{return o.apply(this,arguments);}finally{M.E=E0;}
+  })(beamVerify);
+
+  /* ═════════════════ FIVE-FIGURE fmt() ═════════════════
+     Same format as before (engineering exponent at ≥1e5 or <1e-2), but five
+     significant figures instead of three to four.                          */
+  fmt=function(v,unit,pow){
+    if(!isFinite(v))return '—';
+    const av=Math.abs(v);let e=0;
+    if(av>=1e5||(av>0&&av<1e-2))e=Math.floor(Math.log10(av)/3)*3;
+    const m=v/Math.pow(10,e);
+    const am=Math.abs(m);
+    const d0=am>=100?1:(am>=10?2:3);                      /* the original's decimals … */
+    const digits=am===0?4:Math.max(d0,4-Math.floor(Math.log10(am)));  /* … or 5 figures, whichever is more */
+    let s=m.toFixed(digits);
+    if(e!==0)s+='×10'+supNum(e);
+    return s+`<span class="unit">${unit||''}${pow?supNum(pow):''}</span>`;
+  };
+
+  /* ═════════════════ RESULTS: support slopes + probe rows ═════════════════ */
+  (function(){
+    const anchor=$('rLd')&&$('rLd').closest('tr');
+    if(!anchor)return;
+    anchor.insertAdjacentHTML('afterend',
+      '<tr><td class="k">Slope θ at supports</td><td class="v" id="rTh">—</td></tr>'+
+      '<tr class="hr"><td class="k" colspan="2">Probe at x = <input type="number" class="num w44" id="bProbeX" step="any" placeholder="x" aria-label="Probe station"> m'+
+      ' <span class="note">(δ, θ, M, V at any station)</span></td></tr>'+
+      '<tr><td class="v" colspan="2" id="bProbeOut" style="text-align:right;white-space:normal"><span style="color:#9AA6B0">enter x</span></td></tr>');
+    proxify($('bProbeX'),'len_b');
+    $('bProbeX').addEventListener('input',()=>beamRecalc(sectionProps()));
+  })();
+
+  /* ═════════════════ SUPPORT COMBINATIONS ═════════════════
+     Pin, roller and fixed at either end (plus the free end of a cantilever).
+     Transversely a pin and a roller are the same (δ = 0); they differ only in
+     whether they hold the beam horizontally. So every combination maps to one
+     of four bending problems — simple–simple, clamp–simple (either way round),
+     clamp–free (either way round) and clamp–clamp — and the axial force N(x) is
+     then rebuilt from which ends carry horizontal reaction. Pin–pin, pin–fixed,
+     fixed–pin and fixed–fixed restrain both ends axially: a horizontal load
+     between them is shared in proportion to the opposite segment length
+     (uniform EA). Roller–roller has no horizontal restraint and is stable for
+     transverse loads only (flagged if any horizontal load is applied).
+     The three original types (pin–roller, fixed cantilever, fixed–roller)
+     still go straight to the original solver, untouched.                    */
+  const P_beam0=P_beam;
+  function P_beamFF(cfg,props,N){
+    const SUP={rollerpin:['S','S',0,1],pinpin:['S','S',1,1],rollerroller:['S','S',0,0],
+               freefixed:['F','C',0,1],rollerfixed:['S','C',0,1],pinfixed:['S','C',1,1],
+               fixedpin:['C','S',1,1],fixedfixed:['C','C',1,1]};
+    const sp=cfg&&SUP[cfg.supType];
+    if(!sp)return P_beam0(cfg,props,N);
+    const L=cfg.L;
+    let xA=(cfg.xA===undefined||cfg.xA===null||!isFinite(cfg.xA))?0:Math.min(Math.max(cfg.xA,0),L);
+    let xB=(cfg.xB===undefined||cfg.xB===null||!isFinite(cfg.xB))?L:Math.min(Math.max(cfg.xB,0),L);
+    if(Math.abs(xB-xA)<1e-6)xB=xA+(xA<L/2?1e-6:-1e-6);
+    const tA=sp[0],tB=sp[1],hA=sp[2],hB=sp[3];
+    let rr;
+    if(tA==='S'&&tB==='S'){
+      rr=P_beam0(Object.assign({},cfg,{supType:'pinroller',xA,xB}),props,N);
+      rr.MR=0;rr.MB=0;
+    }else if(tA==='C'&&tB==='S'){
+      rr=P_beam0(Object.assign({},cfg,{supType:'fixedroller',xA,xB}),props,N);
+      rr.MB=0;
+    }else if(tA==='S'&&tB==='C'){                /* propped cantilever, clamp on the right */
+      const q=P_beam0(Object.assign({},cfg,{supType:'fixedroller',xA:xB,xB:xA}),props,N);
+      rr=q;const R1=q.R2,R2=q.R1;rr.R1=R1;rr.R2=R2;rr.MB=q.MR;rr.MR=0;
+    }else if(tA==='F'&&tB==='C'){                /* cantilever clamped on the right */
+      const q=P_beam0(Object.assign({},cfg,{supType:'fixed',xA:xB,xB:xA}),props,N);
+      rr=q;rr.R2=q.R1;rr.R1=0;rr.MB=q.MR;rr.MR=0;
+    }else{                                       /* clamp–clamp: force method */
+      const EI=(cfg.mat.E*1e9)*(props.Ix*1e-12);
+      const at=(r,a2,xq)=>{const t=Math.min(Math.max(xq,0),L)/L*(N-1);
+        const i0=Math.floor(t),i1=Math.min(i0+1,N-1),f=t-i0;return a2[i0]*(1-f)+a2[i1]*f;};
+      const slope=r=>{const dx=L/(N-1),th=new Array(N);
+        th[0]=(r.def[1]-r.def[0])/dx-(r.M[0]+r.M[1])*dx/(4*EI);
+        for(let i=1;i<N;i++)th[i]=th[i-1]+(r.M[i-1]+r.M[i])/2*dx/EI;return th;};
+      const base=Object.assign({},cfg,{supType:'fixed',xA,xB});
+      const unitCfg=Object.assign({},base,{loads:[],udl:{on:false,w:0,x1:0,x2:0},tris:[],moms:[],self:false});
+      const r0=P_beam0(base,props,N);
+      const r1=P_beam0(Object.assign({},unitCfg,{loads:[{P:-1,a:xB,ang:90}]}),props,N);   /* 1 kN up at xB */
+      const r2=P_beam0(Object.assign({},unitCfg,{moms:[{on:true,M:1,a:xB}]}),props,N);   /* 1 kN·m CCW at xB */
+      const d0=at(r0,r0.def,xB),d1=at(r1,r1.def,xB),d2=at(r2,r2.def,xB);
+      const t0=at(r0,slope(r0),xB),t1=at(r1,slope(r1),xB),t2=at(r2,slope(r2),xB);
+      const det=d1*t2-d2*t1;
+      const R=Math.abs(det)>1e-300?(-d0*t2+d2*t0)/det:0;      /* kN, upward   */
+      const Mb=Math.abs(det)>1e-300?(-d1*t0+d0*t1)/det:0;     /* kN·m, CCW    */
+      rr=P_beam0(Object.assign({},base,{
+        loads:(cfg.loads||[]).concat([{P:-R,a:xB,ang:90}]),
+        moms:(cfg.moms||[]).concat([{on:true,M:Mb,a:xB}])}),props,N);
+      rr.P=rr.P.slice(0,rr.P.length-1);                        /* hide the redundants */
+      if(Math.abs(Mb)>=1e-12&&rr.moms.length)rr.moms=rr.moms.slice(0,rr.moms.length-1);
+      rr.R2=R*1e3;rr.MB=Mb*1e3;
+    }
+    /* axial force from the actual horizontal restraints */
+    const xs=rr.xs,Nax=new Array(xs.length),P=rr.P||[];
+    let sumFx=0;for(const p of P)sumFx+=p.fx;
+    let HA=0,HB=0;
+    if(hA&&hB){
+      const s1=Math.min(xA,xB),s2=Math.max(xA,xB),span=s2-s1;
+      let sh2=0;                                  /* load share carried by the s2 support */
+      for(const p of P){
+        if(p.a>=s2-1e-12)sh2+=p.fx;
+        else if(p.a>s1+1e-12)sh2+=p.fx*(p.a-s1)/span;
+      }
+      for(let i=0;i<xs.length;i++){
+        const x=xs[i];let n=0;
+        if(x<s1-1e-12){for(const p of P)if(p.a<x)n-=p.fx;}
+        else{for(const p of P)if(p.a>x)n+=p.fx;if(x<s2-1e-12)n-=sh2;}
+        Nax[i]=n;
+      }
+      const H2=-sh2,H1=-(sumFx-sh2);
+      if(xA<=xB){HA=H1;HB=H2;}else{HA=H2;HB=H1;}
+    }else if(hA||hB){
+      const s=hA?xA:xB;
+      for(let i=0;i<xs.length;i++){
+        const x=xs[i];let n=0;
+        if(x>=s-1e-12){for(const p of P)if(p.a>x)n+=p.fx;}else{for(const p of P)if(p.a<x)n-=p.fx;}
+        Nax[i]=n;
+      }
+      if(hA)HA=-sumFx;else HB=-sumFx;
+    }else{
+      for(let i=0;i<xs.length;i++){let n=0;for(const p of P)if(p.a>xs[i])n+=p.fx;Nax[i]=n;}
+    }
+    rr.N=Nax;let iN=0;for(let i=0;i<Nax.length;i++)if(Math.abs(Nax[i])>Math.abs(Nax[iN]))iN=i;rr.iN=iN;
+    rr.Hx=hA?HA:HB;rr.HxA=HA;rr.HxB=HB;rr.sumFx=sumFx;
+    rr.unstableX=(!hA&&!hB&&Math.abs(sumFx)>1e-6);
+    rr.supType=cfg.supType;rr.xA=xA;rr.xB=xB;rr.L=L;
+    return rr;
+  }
+  P_beam=P_beamFF;
+  /* worker: same function list as before, original solver kept as P_beam0 */
+  buildWorker=function(){
+    const fns=[P_signedArea,P_integrals,P_section,P_clipAbove,P_slice,P_intervals,
+      P_segX,P_selfX,P_pairX,P_pointIn,P_validGeom,P_triPart,P_normStress,P_tauMax,P_eval,
+      P_mulberry,P_gauss,P_copy,P_scaleAll,P_mutate,
+      T_arc,T_rrect,T_ibeam,T_box,T_channel,T_tsec,T_rect,T_build,
+      P_cost,P_rubric,P_evalP,P_mutP,P_procMats,P_seedParams];
+    const src=P_beam0.toString()+'\n\n'+P_beamFF.toString()+'\n\n'+
+      fns.map(f=>f.toString()).join('\n\n')+
+      '\nvar P_beam0=P_beam;P_beam=P_beamFF;\n('+W_main.toString()+')();';
+    return new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+  };
+  if(opt.worker&&!opt.busy&&!opt.dsBusy&&!ds.busy){try{opt.worker.terminate();}catch(e){}opt.worker=null;}
+
+  /* support selector + labels */
+  (function(){
+    const sel=$('bSup');if(!sel)return;
+    [['rollerpin','Roller + Pin'],['pinpin','Pin + Pin'],['rollerroller','Roller + Roller (vertical loads only)'],
+     ['fixedpin','Fixed + Pin (propped)'],['pinfixed','Pin + Fixed (propped)'],['rollerfixed','Roller + Fixed (propped)'],
+     ['freefixed','Free + Fixed (cantilever, clamp at right)'],['fixedfixed','Fixed + Fixed (both clamped)']]
+    .forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o);});
+    const rl=$('bXB')&&$('bXB').previousSibling;          /* the "Roller " text */
+    const rl0=rl&&rl.nodeType===3?rl.data:null;
+    bSupUI=(f=>function(){
+      const r=f.apply(this,arguments);
+      if(NEWSUP[beam.sup]){
+        const e=ENDS[beam.sup];
+        $('bXAlab').textContent=e[0];
+        if(rl0!==null)rl.data=rl0.replace('Roller',e[1]);
+      }else if(rl0!==null)rl.data=rl0;
+      $('bXA').disabled=(beam.sup==='freefixed');
+      return r;
+    })(bSupUI);
+    sel.addEventListener('change',()=>bSupUI());
+  })();
+
+  /* diagram: draw with the original pin–roller artwork, then redraw both ends
+     with the actual support symbols and any clamp moments */
+  function momArc(x,beamY,M,lab){
+    if(Math.abs(M)<=1e-9)return;
+    const ccw=M>0,R=15;
+    bctx.strokeStyle='#2B8A3E';bctx.lineWidth=2.2;
+    bctx.beginPath();bctx.arc(x,beamY-40,R,-0.55*Math.PI,0.72*Math.PI,!ccw);bctx.stroke();
+    const ea=ccw?-0.55*Math.PI:0.72*Math.PI;
+    const ex=x+R*Math.cos(ea),ey=beamY-40+R*Math.sin(ea),tg=ccw?ea-Math.PI/2:ea+Math.PI/2;
+    bctx.fillStyle='#2B8A3E';bctx.beginPath();
+    bctx.moveTo(ex+7*Math.cos(tg),ey+7*Math.sin(tg));
+    bctx.lineTo(ex+6*Math.cos(tg+2.5),ey+6*Math.sin(tg+2.5));
+    bctx.lineTo(ex+6*Math.cos(tg-2.5),ey+6*Math.sin(tg-2.5));
+    bctx.closePath();bctx.fill();
+    const Mu=U('kN·m');
+    bctx.font='600 11px "IBM Plex Mono",monospace';
+    const t=lab+'='+g5(M/1e3*Mu.f);
+    bctx.fillText(t,Math.max(4,Math.min(x-28,bcv.width-8-bctx.measureText(t).width)),beamY-62);
+  }
+  drawBeamDiagrams=(o=>function(r,hoverX){
+    if(!r||!NEWSUP[r.supType])return o.apply(this,arguments);
+    const ret=o.call(this,Object.assign({},r,{supType:'pinroller'}),hoverX);
+    const beamY=(BAND.sch.y0+BAND.sch.y1)/2+22,e=ENDS[r.supType];
+    [[r.xA,e[0],r.MR,'M_A',true],[r.xB,e[1],r.MB,'M_B',false]].forEach(([xm,kind,M,lab,isA])=>{
+      const x=bpx(xm);
+      bctx.fillStyle='#FDFDFB';bctx.fillRect(x-24,beamY+2,44,44);
+      if(kind==='Free'){bctx.fillRect(x-62,beamY+47,84,18);return;}
+      if(kind==='Pin')support(bctx,x,beamY,false);
+      else if(kind==='Roller')support(bctx,x,beamY,true);
+      else{supportFixed(bctx,x,beamY,xm<=r.L/2);momArc(x,beamY,M,lab);}
+      arrow(bctx,x,beamY+46,x,beamY+16,'#2B8A3E',1.8,6);
+    });
+    return ret;
+  })(drawBeamDiagrams);
+
+  /* simple–simple combinations share the pin–roller closed forms (transverse) */
+  beamVerify=(o=>function(){
+    if(!(beam.sup==='rollerpin'||beam.sup==='pinpin'||beam.sup==='rollerroller'))return o.apply(this,arguments);
+    const s0=beam.sup;beam.sup='pinroller';
+    try{return o.apply(this,arguments);}finally{beam.sup=s0;}
+  })(beamVerify);
+
+  /* closed-form check for the two textbook fixed–fixed cases */
+  beamVerify=(o=>function(r,props,extra){
+    const ret=o.apply(this,arguments);
+    if(beam.sup!=='fixedfixed')return ret;
+    const box=$('bVerifyBody');
+    const L=beam.L,E=mkCfg().mat.E,EI=(E*1e9)*(props.Ix*1e-12);
+    const loads=beam.loads.filter(l=>Math.abs(l.P)>1e-9);
+    const udlOn=beam.udl.on&&Math.abs(beam.udl.w)>1e-9&&beam.udl.x2>beam.udl.x1;
+    const triOn=beam.tris.some(t=>t.on!==false&&t.x2>t.x1&&(Math.abs(t.w1)>1e-9||Math.abs(t.w2)>1e-9));
+    const momOn=beam.moms.some(m=>m.on!==false&&Math.abs(m.M)>1e-9);
+    const down=beam.loads.every(l=>Math.abs((l.ang===undefined?90:l.ang)-90)<1e-9);
+    const ends=Math.abs(beam.xA)<1e-9&&Math.abs(beam.xB-L)<1e-9;
+    const Mu=U('kN·m'),Du=U('mm');
+    const row=(n,c,t)=>{const err=Math.abs(c-t)/Math.max(Math.abs(t),1e-12)*100;
+      return `<tr><td>${n}</td><td>${g5(c)}</td><td>${g5(t)}</td><td class="${err<0.5?'ok':''}">${err.toFixed(3)}%</td></tr>`;};
+    const Mend=Math.max(Math.abs(r.MR),Math.abs(r.MB))/1e3*Mu.f;
+    let mid=0;for(let i=0;i<r.xs.length;i++)if(Math.abs(r.xs[i]-L/2)<Math.abs(r.xs[mid]-L/2))mid=i;
+    const Mmid=Math.abs(r.M[mid])/1e3*Mu.f, dmax=Math.abs(r.def[r.iD])*1e3*Du.f;
+    let html=null;
+    if(ends&&down&&!triOn&&!momOn&&!beam.self){
+      if(loads.length===1&&!udlOn&&Math.abs(loads[0].a-L/2)<1e-9){
+        const P=loads[0].P*1e3;
+        html='<p class="verify-msg" style="margin-bottom:6px">Fixed–fixed, single point load at midspan</p>'+
+          '<table class="verify"><tr><th>Qty</th><th>Computed</th><th>PL/8 · PL³/192EI</th><th>Δ</th></tr>'+
+          row('M at ends ('+Mu.u+')',Mend,P*L/8/1e3*Mu.f)+row('M at midspan ('+Mu.u+')',Mmid,P*L/8/1e3*Mu.f)+
+          row('δmax ('+Du.u+')',dmax,P*L**3/(192*EI)*1e3*Du.f)+'</table>';
+      }else if(loads.length===0&&udlOn&&beam.udl.x1<=1e-9&&Math.abs(beam.udl.x2-L)<1e-9){
+        const w=beam.udl.w*1e3;
+        html='<p class="verify-msg" style="margin-bottom:6px">Fixed–fixed, uniform load over the full span</p>'+
+          '<table class="verify"><tr><th>Qty</th><th>Computed</th><th>wL²/12 · wL²/24 · wL⁴/384EI</th><th>Δ</th></tr>'+
+          row('M at ends ('+Mu.u+')',Mend,w*L*L/12/1e3*Mu.f)+row('M at midspan ('+Mu.u+')',Mmid,w*L*L/24/1e3*Mu.f)+
+          row('δmax ('+Du.u+')',dmax,w*L**4/(384*EI)*1e3*Du.f)+'</table>';
+      }
+    }
+    box.innerHTML=html||'<p class="verify-msg">Fixed–fixed beam: solved exactly by the force method (redundants R<sub>B</sub> and M<sub>B</sub> from δ = θ = 0 at the right clamp). Set one midspan point load, or a full-span UDL alone, with clamps at both ends to unlock the closed-form comparison.</p>';
+    return ret;
+  })(beamVerify);
+
+  /* ---------- boot ---------- */
+  wireStatic();
+  ['loadRows','triRows','momRows','dsParams'].forEach(wireRows);
+  ctRefresh();
+  mo.observe(document.body,{subtree:true,childList:true,characterData:true});
+  let saved='SI';
+  try{saved=localStorage.getItem(LS_KEY)||'SI';}catch(e){}
+  if(saved!=='SI')setSystem(saved);
+
+  globalThis.__beamUnits={setSystem,get system(){return sys;},convertText,U,exactSolve,version:'bx4-units-1.0'};
+})();
+
 </script>
 </body>
 </html>

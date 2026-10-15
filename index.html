@@ -5619,6 +5619,65 @@ globalThis.__beamExt = BX;
     return ret;
   })(beamVerify);
 
+  /* ═════════════ DEFLECTION ON THE DIAGRAM ═════════════
+     The hover read-out and the peak label of the v-diagram printed deflection
+     with 3 (hover) or 2 (peak) decimals, so small deflections read 0.000.
+     Both now show the exact deflection (same engine as the results panel) with
+     at least 6 decimal places, in the active units. N, V, M are untouched.   */
+  const exCache=new WeakMap();
+  function exFor(r){
+    if(!r||!bres||!bres.props)return null;
+    if(exCache.has(r))return exCache.get(r);
+    let e=null;
+    try{e=exactSolve(r,r.supType,(mkCfg().mat.E*1e9)*(bres.props.Ix*1e-12));}catch(err){e=null;}
+    exCache.set(r,e);return e;
+  }
+  const fmtDef=x=>{if(!isFinite(x))return '—';const ax=Math.abs(x);if(ax<1e-15)return (0).toFixed(6);
+    return x.toFixed(Math.min(12,Math.max(6,5-Math.floor(Math.log10(ax)))));};
+  function withCanvasText(fn,xf){
+    const own=Object.prototype.hasOwnProperty.call(bctx,'fillText'),prev=bctx.fillText;
+    bctx.fillText=function(t,x,y,mw){return prev.call(this,typeof t==='string'?xf(t):t,x,y,mw);};
+    try{return fn();}finally{if(own)bctx.fillText=prev;else delete bctx.fillText;}
+  }
+  drawBeamDiagrams=(o=>function(r,hoverX){
+    if(!r||hoverX==null)return o.apply(this,arguments);
+    const ex=exFor(r);
+    const d=ex?ex.delta(Math.min(Math.max(hoverX,0),r.L)):null;
+    if(d===null)return o.apply(this,arguments);
+    const txt=fmtDef(d*1e3*U('mm').f)+' '+(isUS()?'in':'mm');
+    return withCanvasText(()=>o.apply(this,arguments),
+      t=>/^x=/.test(t)?t.replace(/v=-?[\d.]+\s*mm/,'v='+txt):t);
+  })(drawBeamDiagrams);
+  band=(o=>function(c,B,xs,ys,scaleLab,label,col,iMax){
+    if(c!==bctx||!/^v \(/.test(label))return o.apply(this,arguments);
+    const ex=bres&&bres.r?exFor(bres.r):null;
+    const pv=ex?ex.dMax*1e3*U('mm').f:ys[iMax]*scaleLab;
+    const args=arguments;
+    return withCanvasText(()=>o.apply(this,args),t=>/^-?\d+(\.\d+)?$/.test(t)?fmtDef(pv):t);
+  })(band);
+
+  /* ═════════════ SHORT SPANS ═════════════
+     The original span handler clamps L to at least 0.5 m (1.640 ft = 19.7 in).
+     Anything shorter was silently solved as 0.5 m while the field still showed
+     the typed value — so supports, loads and the drawing no longer matched.
+     This listener runs right after the original one and, for 0 < L < 0.5 m,
+     re-applies exactly the same span update with the value actually typed.  */
+  $('bL').addEventListener('input',e=>{
+    const v=+e.target.value;
+    if(!(isFinite(v)&&v>0&&v<0.5))return;
+    const oldL=beam.L;
+    beam.L=Math.max(0.001,v);
+    if(Math.abs(beam.xB-oldL)<1e-9)beam.xB=beam.L;
+    beam.xA=Math.min(beam.xA,beam.L);beam.xB=Math.min(beam.xB,beam.L);
+    bSupSync();
+    beam.udl.x2=Math.min(beam.udl.x2,beam.L);
+    $('uX2').value=beam.udl.x2;
+    beam.loads.forEach(l=>l.a=Math.min(l.a,beam.L));
+    beam.tris.forEach(t=>{t.x1=Math.min(t.x1,beam.L);t.x2=Math.min(t.x2,beam.L);});
+    beam.moms.forEach(m=>m.a=Math.min(m.a,beam.L));
+    renderLoadRows();renderTriRows();renderMomRows();beamRecalc(sectionProps());
+  });
+
   /* ---------- boot ---------- */
   wireStatic();
   ['loadRows','triRows','momRows','dsParams'].forEach(wireRows);
